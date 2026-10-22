@@ -164,8 +164,8 @@ function renderFolders() {
   const list = $("folder-list");
   const scroll = list.closest("main").scrollTop;
   list.replaceChildren(...rows.map(folderBox));
-  if (codeMode && !rows.length) list.append(element("p", "note", "No folders with code turned up in your home folder. Add "
-                                                    + "the ones that hold your repositories."));
+  if (codeMode && !rows.length) list.append(element("p", "note", "В домашней папке не нашлось папок с кодом. Добавьте "
+                                                    + "те, где лежат ваши репозитории."));
   list.closest("main").scrollTop = scroll;
   renderFooter();
 }
@@ -180,7 +180,7 @@ function folderBox(row) {
   const disclosure = element("button", "disclosure" + (isOpen ? " open" : ""));
   disclosure.innerHTML = CHEVRON;
   disclosure.disabled = !subfolders.length;
-  disclosure.title = isOpen ? "Hide its subfolders" : "Choose among its subfolders";
+  disclosure.title = isOpen ? "Скрыть вложенные папки" : "Выбрать среди вложенных папок";
   disclosure.onclick = (event) => {
     event.stopPropagation();
     if (open.has(key(row))) open.delete(key(row)); else open.add(key(row));
@@ -194,10 +194,10 @@ function folderBox(row) {
   text.append(element("div", "name", nameOf(row)));
   // Unchecked, a folder shows all it holds (what checking it would take); else what's searched of it.
   const part = mark === "off" ? wholePart(answer) : partOf(row);
-  if (answer?.failed) text.append(element("div", "counts", "Couldn't look inside it; it can still be searched."));
-  else if (answer?.readable === false) text.append(element("div", "counts problem", "Can't read it"));
+  if (answer?.failed) text.append(element("div", "counts", "Не удалось заглянуть внутрь, но искать в ней можно."));
+  else if (answer?.readable === false) text.append(element("div", "counts problem", "Нет доступа"));
   else if (part && Object.values(part.files).some((count) => count > 0)) text.append(element("div", "counts", countsText(part.files)));
-  else text.append(element("div", "path", answer ? (Object.keys(answer.files || {}).length ? "Nothing to search in the subfolders checked" : codeMode ? "No code here" : "Nothing DigUp searches in it") : native(row)));
+  else text.append(element("div", "path", answer ? (Object.keys(answer.files || {}).length ? "В отмеченных вложенных папках нет фото и видео" : codeMode ? "Кода нет" : "Фото и видео нет") : native(row)));
   header.append(disclosure, check, text);
   if (answer && !answer.failed && answer.readable !== false && calibrated) header.append(timeOf(part, mark === "off"));
   else if (!answer) header.append(element("div", "time", "…"));
@@ -260,12 +260,12 @@ function timeOf(part, quiet, small) {
   time.textContent = seconds < 1 ? (small ? "" : "—") : `about ${roughDuration(seconds)}`;
   if (codeMode) {
     if (!small && (part?.bytes || 0) > 0) time.append(element("small", "", roughBytes(part.bytes)));
-    time.title = "How long reading this code takes, once, and about how much room its index needs. After that, only "
-      + "what changes is read again.";
+    time.title = "Сколько займёт первое чтение кода и сколько места нужно индексу. Потом читается "
+      + "только то, что меняется.";
   } else {
     if (!small && (part?.later || 0) >= 30) time.append(element("small", "", `+ ${roughDuration(part.later)} later`));
-    time.title = "How long the first pass takes on this computer. Long PDFs and documents get their first pages in it, "
-      + "and the rest afterwards.";
+    time.title = "Сколько займёт первый просмотр на этом компьютере. Потом программа "
+      + "досматривает только новое.";
   }
   if (quiet) time.classList.add("quiet");
   return time;
@@ -274,28 +274,28 @@ function timeOf(part, quiet, small) {
 /// "1,204 pictures · 37 PDFs · 12 documents · 3 videos"
 function countsText(files) {
   const part = (count, one, many) => (count > 0 ? `${count.toLocaleString()} ${count === 1 ? one : many}` : null);
-  if (codeMode) return part(files.code, "file of code", "files of code") || "No code here";
+  if (codeMode) return part(files.code, "файл кода", "файлов кода") || "Кода нет";
   return [
-    part((files.image || 0) + (files.screenshot || 0), "picture", "pictures"),
-    part(files.pdf, "PDF", "PDFs"),
-    part(files.doc, "document", "documents"),
-    part(files.audio, "recording", "recordings"),
-    part(files.video, "video", "videos"),
-  ].filter(Boolean).join(" · ") || "Nothing DigUp searches in it";
+    part((files.image || 0) + (files.screenshot || 0), "фото", "фото"),
+    null,
+    null,
+    null,
+    part(files.video, "видео", "видео"),
+  ].filter(Boolean).join(" · ") || "Фото и видео нет";
 }
 
 /// "360 KB", "12 MB": an index's size, roughly.
 function roughBytes(count) {
-  if (count < 1e6) return `${Math.max(1, Math.round(count / 1e3))} KB`;
-  if (count < 1e9) return `${Math.round(count / 1e6)} MB`;
-  return `${(count / 1e9).toFixed(1)} GB`;
+  if (count < 1e6) return `${Math.max(1, Math.round(count / 1e3))} КБ`;
+  if (count < 1e9) return `${Math.round(count / 1e6)} МБ`;
+  return `${(count / 1e9).toFixed(1).replace(".", ",")} ГБ`;
 }
 
 /// "45 s", "4 min", "1.5 h": the precision an estimate deserves (the Mac app's roughDuration).
 function roughDuration(seconds) {
-  if (seconds < 90) return `${Math.round(seconds)} s`;
-  if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
-  return `${(seconds / 3600).toFixed(1)} h`;
+  if (seconds < 90) return `${Math.round(seconds)} с`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} мин`;
+  return `${(seconds / 3600).toFixed(1).replace(".", ",")} ч`;
 }
 
 $("add-folder").addEventListener("click", async () => {
@@ -333,12 +333,12 @@ function renderCode() {
     const text = element("div", "text");
     text.append(element("div", "name", nameOf(folder)));
     const answer = codeEstimates.get(key(folder));
-    text.append(element("div", "counts", answer ? (answer.files?.code ? `${answer.files.code.toLocaleString()} files of code`
-      : "No code here") : native(folder)));
+    text.append(element("div", "counts", answer ? (answer.files?.code ? `${answer.files.code.toLocaleString()} файлов кода`
+      : "Кода нет") : native(folder)));
     row.append(checkbox(on ? "on" : "off", toggle), text);
     if (answer?.files?.code) {
       const time = element("div", "time" + (on ? "" : " quiet"),
-                           answer.seconds < 1 ? "under a second" : `about ${roughDuration(answer.seconds)}`);
+                           answer.seconds < 1 ? "меньше секунды" : `около ${roughDuration(answer.seconds)}`);
       if (answer.bytes > 0) time.append(element("small", "", roughBytes(answer.bytes)));
       row.append(time);
     } else if (!answer) {
@@ -367,8 +367,8 @@ function render() {
   PAGES.forEach((name, index) => { $(name).hidden = index !== page; });
   $("back").hidden = firstTime ? page === 0 || page === PAGES.length - 1 : false;
   $("back").textContent = firstTime ? "Back" : "Cancel";
-  $("next").textContent = !firstTime ? "Save" : page === PAGES.length - 1 ? "Done"
-    : PAGES[page] === "folders" && selection.chosen.length ? "Start indexing" : "Continue";
+  $("next").textContent = !firstTime ? "Сохранить" : page === PAGES.length - 1 ? "Готово"
+    : PAGES[page] === "folders" && selection.chosen.length ? "Начать просмотр" : "Далее";
   $("next").disabled = page === 1 && !selection.folders().length;
   $("model").hidden = codeMode || page === 0 || page === PAGES.length - 1;
   renderFooter();
@@ -388,24 +388,24 @@ function renderFooter() {
   $("next").disabled = page === 1 && !selection.folders().length;
   let summary = "";
   if (PAGES[page] === "folders") {
-    if (!selection.folders().length) summary = "Choose at least one folder";
-    else if (estimating > 0 || rows.some((row) => selection.isSearched(row) && !estimates.has(key(row)))) summary = "Looking at your folders…";
+    if (!selection.folders().length) summary = "Выберите хотя бы одну папку";
+    else if (estimating > 0 || rows.some((row) => selection.isSearched(row) && !estimates.has(key(row)))) summary = "Смотрю ваши папки…";
     // Turning code search on: what reading the code takes, and its index.
     else if (codeMode && !info.chosen.length) {
       const total = selectionPart();
-      summary = calibrated ? `About ${roughDuration(total.seconds)} to read, an index of about ${roughBytes(total.bytes)}` : "";
+      summary = calibrated ? `Чтение — около ${roughDuration(total.seconds)}, индекс — около ${roughBytes(total.bytes)}` : "";
     }
     // Later (Choose Folders…) the folders searched already aren't read again: no first pass to tell.
     else if (!firstTime) summary = "";
-    else if (calibrated) summary = `First pass: about ${roughDuration(selectionPart().seconds)}`;
-    else summary = "Times show once DigUp has timed this computer";
+    else if (calibrated) summary = `Первый просмотр: около ${roughDuration(selectionPart().seconds)}`;
+    else summary = "Время появится, когда программа замерит скорость компьютера";
   }
   if (PAGES[page] === "code") {
     const chosen = [...codeChosen].map((folder) => codeEstimates.get(key(folder))).filter(Boolean);
     const seconds = chosen.reduce((sum, answer) => sum + (answer.seconds || 0), 0);
     const size = chosen.reduce((sum, answer) => sum + (answer.bytes || 0), 0);
-    summary = !codeChosen.size ? "Code search stays off for now"
-      : `Reading the code: about ${roughDuration(Math.max(1, seconds))}, an index of about ${roughBytes(size)}`;
+    summary = !codeChosen.size ? "Поиск по коду пока выключен"
+      : `Чтение кода: около ${roughDuration(Math.max(1, seconds))}, индекс — около ${roughBytes(size)}`;
   }
   $("summary").textContent = summary;
 }
@@ -488,44 +488,44 @@ function renderProgress() {
   const what = $("progress-what"), left = $("progress-left"), bar = $("bar"), fill = $("bar-fill");
   let fraction = null, busy = false, done = false, label = "", time = "", note = "";
   if (model.state === "downloading") {
-    label = "Downloading the model";
+    label = "Скачиваю модель";
     fraction = model.total ? model.bytes / model.total : 0;
     const rate = downloadRate();
     time = `${Math.floor(fraction * 100)}%` + (rate > 0 && model.total ? ` · about ${roughDuration((model.total - model.bytes) / rate)} left` : "");
-    note = "865 MB, once. DigUp starts reading your files when it's in; until then, search finds files by name.";
-    if (model.problem) note = `${model.problem}; trying again.`;
+    note = "865 МБ, один раз. Когда модель скачается, программа начнёт смотреть ваши файлы; до тех пор поиск идёт по именам.";
+    if (model.problem) note = `${model.problem}; пробую снова.`;
   } else if (model.state === "waiting") {
-    label = "Waiting for the network to download the model";
+    label = "Жду интернет, чтобы скачать модель";
     busy = true;
   } else if (model.state === "failed") {
-    label = "The model couldn't download";
+    label = "Модель не скачалась";
     note = model.message || "";
   } else if (state.measuring) {
-    label = "Checking this computer's speed";
+    label = "Замеряю скорость компьютера";
     busy = true;
-    note = "DigUp times its model on this computer once, to tell how long indexing takes here.";
+    note = "Один раз замеряю, как быстро модель работает на этом компьютере, чтобы рассчитать время.";
   } else if (state.activity === "indexing" && state.indexing) {
     const { done: count, total } = state.indexing;
-    label = "Reading your files";
+    label = "Смотрю ваши файлы";
     fraction = total ? count / total : 0;
     const seconds = timeLeft();
     time = `${count.toLocaleString()} of ${total.toLocaleString()}` + (seconds != null ? ` · ${leftText(seconds)}` : "");
-    note = "You can search right away: results fill in as DigUp reads your files, newest first.";
+    note = "Искать можно уже сейчас: результаты добавляются по мере просмотра, сначала новые файлы.";
   } else if (state.activity === "finishing" && progress.rest) {
     const { done: count, total, files } = progress.rest;
-    label = `Reading the rest of ${files.toLocaleString()} long ${files === 1 ? "file" : "files"}`;
+    label = `Дочитываю длинные файлы: ${files.toLocaleString()}`;
     fraction = total ? count / total : 0;
     const later = selectionPart().later, pace = progress.pace || 1;
     time = `${Math.floor(fraction * 100)}%` + (later > 0 ? ` · ${leftText(later * (1 - fraction) * pace)}` : "");
-    note = "Everything is searchable; long PDFs and documents are being read past their first pages.";
+    note = "Искать можно по всему; длинные файлы дочитываются.";
   } else if (state.activity === "idle" || (state.activity === "starting" && state.searchable > 0 && !state.pending)) {
-    label = state.searchable ? `${state.searchable.toLocaleString()} ${state.searchable === 1 ? "file" : "files"} indexed` : "Up to date";
+    label = state.searchable ? `Просмотрено файлов: ${state.searchable.toLocaleString()}` : "Всё просмотрено";
     done = true;
-    note = "Search from the window, or press the shortcut in any app.";
+    note = "Ищите в окне программы или нажмите сочетание клавиш в любом приложении. Анализ фото — в меню в трее.";
   } else if (state.activity === "failed") {
-    label = state.line || "Indexing stopped";
+    label = state.line || "Просмотр остановлен";
   } else {
-    label = "Looking at your folders";
+    label = "Смотрю ваши папки";
     busy = true;
   }
   what.textContent = label;
@@ -568,7 +568,7 @@ function timeLeft() {
 }
 
 function leftText(seconds) {
-  return seconds < 60 ? "less than a minute left" : `about ${roughDuration(seconds)} left`;
+  return seconds < 60 ? "осталось меньше минуты" : `осталось около ${roughDuration(seconds)}`;
 }
 
 tauri.event.listen("state", ({ payload }) => {
@@ -600,17 +600,17 @@ function showModel(model) {
   }
   const megabytes = (bytes) => Math.round(bytes / 1e6).toLocaleString();
   const lines = {
-    checking: "Checking the model…",
-    waiting: "Waiting for the network to download the model",
-    ready: "Model ready",
-    failed: `The model couldn't download: ${model.message || "unknown error"}`,
+    checking: "Проверяю модель…",
+    waiting: "Жду интернет, чтобы скачать модель",
+    ready: "Модель готова",
+    failed: `Модель не скачалась: ${model.message || "неизвестная ошибка"}`,
   };
   let text = lines[model.state] || "";
   if (model.state === "downloading") {
     text = model.total
-      ? `Downloading the model · ${Math.floor((100 * model.bytes) / model.total)}% of ${megabytes(model.total)} MB`
-      : "Downloading the model…";
-    if (model.problem) text += ` (${model.problem}, trying again)`;
+      ? `Скачиваю модель · ${Math.floor((100 * model.bytes) / model.total)}% из ${megabytes(model.total)} МБ`
+      : "Скачиваю модель…";
+    if (model.problem) text += ` (${model.problem}, пробую снова)`;
   }
   $("model").textContent = text;
   if (PAGES[page] === "ready") renderProgress();
@@ -627,7 +627,7 @@ function showKeys(hotkey) {
   const keys = isMac ? [...hotkey.replace(/[^⌃⌥⇧⌘]/g, "")].concat(hotkey.replace(/[⌃⌥⇧⌘]/g, "")) : hotkey.split("+");
   $("keys").replaceChildren(...keys.filter(Boolean).map((key) => element("span", "key", key)));
   $("reveal-key").textContent = isMac ? "⌘↩" : "Ctrl+↩";
-  $("reveal-text").textContent = isMac ? "shows it in Finder" : isWindows ? "shows it in Explorer" : "shows it in its folder";
+  $("reveal-text").textContent = isMac ? "показать в Finder" : isWindows ? "показать в Проводнике" : "показать в папке";
 }
 
 /// Where the shortcut lives on a desktop that keeps it itself (GNOME, KDE), or the command to give it (other Wayland
@@ -670,7 +670,7 @@ function element(tag, className, text) {
 async function start() {
   info = await invoke(codeMode ? "code_setup_info" : "setup_info");
   firstTime = !info.setUp;
-  if (firstTime && info.codeOffered?.length) PAGES = ["welcome", "folders", "code", "shortcut", "ready"];
+  // Своя версия: без шага про код — программа ищет только фото и видео.
   if (codeMode) {
     $("folders").querySelector("h2").textContent = "Which code should DigUp search?";
     $("folders-subtitle").textContent = "Pick the folders with your code, and open one to leave out some of its "

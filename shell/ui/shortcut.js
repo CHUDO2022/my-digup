@@ -6,7 +6,7 @@
 /// it's shown (null when it was kept: Esc, the window left, or the new one refused, with `problem` saying why).
 function recordShortcut(say, done) {
   const call = (command, args) => window.__TAURI__.core.invoke(command, args);
-  say("Press the new shortcut. Esc keeps the one you have.");
+  say("Нажмите новое сочетание. Esc — оставить прежнее.");
   call("hold_hotkey", { held: true }).catch(() => {});
   const finish = async (accelerator) => {
     document.removeEventListener("keydown", pressed, true);
@@ -29,7 +29,7 @@ function recordShortcut(say, done) {
     const key = shortcutKeyName(event.code);
     if (!key) return;   // a modifier alone, so far
     if (!event.ctrlKey && !event.altKey && !event.metaKey) {
-      say("Add Ctrl, Alt or the Windows key, so that typing doesn't open the panel.");
+      say("Добавьте Ctrl, Alt или клавишу Windows, чтобы поиск не открывался при обычном наборе.");
       return;
     }
     finish([event.ctrlKey && "Ctrl", event.altKey && "Alt", event.shiftKey && "Shift", event.metaKey && "Super", key]

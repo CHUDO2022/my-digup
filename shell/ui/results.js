@@ -12,13 +12,13 @@ const isMac = /Mac/.test(navigator.platform);
 const isWindows = /Win/.test(navigator.platform);
 const isLinux = /Linux/.test(navigator.platform);
 const MOD = isMac ? "⌘" : "Ctrl+";
-const FILE_MANAGER = isMac ? "Finder" : isWindows ? "Explorer" : "Files";
+const FILE_MANAGER = isMac ? "Finder" : isWindows ? "Проводнике" : "папке";
 // Pictures every web view shows as they are; anything else (HEIC, TIFF, RAW…) comes as JPEG from the helper.
 const SHOWN_AS_IS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp"]);
-const GROUP_OF = { screenshot: "Screenshots", image: "Images", pdf: "Documents", doc: "Documents", video: "Video",
-                   audio: "Audio", code: "Code" };
-const KIND_TITLE = { screenshot: "Screenshot", image: "Image", pdf: "PDF", doc: "Document", audio: "Audio",
-                     video: "Video", code: "Code" };
+const GROUP_OF = { screenshot: "Скриншоты", image: "Фото", pdf: "Документы", doc: "Документы", video: "Видео",
+                   audio: "Аудио", code: "Код" };
+const KIND_TITLE = { screenshot: "Скриншот", image: "Фото", pdf: "PDF", doc: "Документ", audio: "Аудио",
+                     video: "Видео", code: "Код" };
 
 /// The home folder, for "~/Pictures" (filled in as the page starts).
 let homeFolder = "";
@@ -29,7 +29,7 @@ function placeOf(hit) {
   if (hit.loc == null) return null;
   switch (hit.segment) {
     case "page":
-    case "page_image": return `p. ${Math.trunc(hit.loc)}`;
+    case "page_image": return `с. ${Math.trunc(hit.loc)}`;
     case "frame": return clock(hit.loc);
     case "audio": return hit.kind === "video" ? `♪ ${clock(hit.loc)}` : clock(hit.loc);
     case "lines": {
@@ -96,27 +96,27 @@ function matchedMeaning(hit) {
 /// Why it's here, in a few words: "Matches the picture", "Matches the frame at 0:06".
 function reasonOf(hit) {
   const words = hit.keyword_rank != null;
-  if (!matchedMeaning(hit)) return words ? "Has your words" : "Matches its name";
+  if (!matchedMeaning(hit)) return words ? "Есть ваши слова" : "Подходит по имени";
   const at = hit.loc != null ? clock(hit.loc) : "";
-  const page = hit.loc != null ? `page ${Math.trunc(hit.loc)}` : "a page";
+  const page = hit.loc != null ? `странице ${Math.trunc(hit.loc)}` : "странице";
   switch (hit.segment) {
-    case "image": return hit.kind === "screenshot" ? "Matches what's on screen" : "Matches the picture";
-    case "ocr": return "Matches the text in it";
-    case "frame": return `Matches the frame at ${at}`;
-    case "audio": return hit.kind === "video" ? `Matches the sound at ${at}` : `Matches what's heard at ${at}`;
-    case "page": return `Matches the text on ${page}`;
-    case "page_image": return `Matches ${page}`;
-    case "chunk": return "Matches its text";
+    case "image": return hit.kind === "screenshot" ? "Подходит то, что на экране" : "Подходит картинка";
+    case "ocr": return "Подходит текст на нём";
+    case "frame": return `Подходит кадр на ${at}`;
+    case "audio": return hit.kind === "video" ? `Подходит звук на ${at}` : `Подходит то, что слышно на ${at}`;
+    case "page": return `Подходит текст на ${page}`;
+    case "page_image": return `Подходит страница`;
+    case "chunk": return "Подходит текст";
     case "lines":
-    case "cells": return `Matches ${span(hit) ?? "the code"}`;
-    default: return "Matches its name";
+    case "cells": return `Подходит ${span(hit) ?? "код"}`;
+    default: return "Подходит по имени";
   }
 }
 
 /// "Screenshot · Oct 7, 2026 · 1440 × 900 · 62 KB", "PDF · … · 463 pages, 120 read so far · 23 MB"
 function details(hit) {
   const info = hit.info || {};
-  const parts = [KIND_TITLE[hit.kind] || "File", dateOf(hit.modified)];
+  const parts = [KIND_TITLE[hit.kind] || "Файл", dateOf(hit.modified)];
   if (info.width && info.height) parts.push(`${info.width} × ${info.height}`);
   const readTo = info.read_to != null ? Number(info.read_to) : null;
   if (info.pages) {
@@ -158,16 +158,16 @@ function clock(seconds) {
 }
 
 function dateOf(seconds) {
-  return new Date(seconds * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return new Date(seconds * 1000).toLocaleDateString("ru-RU", { year: "numeric", month: "short", day: "numeric" });
 }
 
 /// Sizes the way file managers count them (1 KB = 1,000 bytes): "62 KB", "2.1 MB".
 function bytes(count) {
-  if (count < 1000) return `${count} bytes`;
-  const units = ["KB", "MB", "GB", "TB"];
+  if (count < 1000) return `${count} Б`;
+  const units = ["КБ", "МБ", "ГБ", "ТБ"];
   let value = count / 1000, unit = 0;
   while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit += 1; }
-  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1).replace(".", ",")} ${units[unit]}`;
 }
 
 /// An excerpt with the words keyword search found (marked « ») in bold.

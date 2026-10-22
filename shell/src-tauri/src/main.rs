@@ -331,7 +331,7 @@ fn setup_info(app: AppHandle, shell: State<'_, Arc<Shell>>) -> Value {
 #[tauri::command]
 async fn pick_folders(app: AppHandle) -> Vec<String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.dialog().file().set_title("Add Folders").pick_folders(move |folders| {
+    app.dialog().file().set_title("Добавить папки").pick_folders(move |folders| {
         let _ = sender.send(folders);
     });
     let picked = receiver.await.ok().flatten().unwrap_or_default();
@@ -377,7 +377,7 @@ fn finish_setup(app: AppHandle, shell: State<'_, Arc<Shell>>) -> Result<(), Stri
     #[cfg(target_os = "linux")]
     if first && shell.shortcut == Method::Gnome && !shell.dev_run() {
         if let Err(error) = hotkey::gnome::bind(&shell.hotkey(), &hotkey::toggle_command()) {
-            set_status(&app, &format!("The shortcut couldn't be added to GNOME's settings: {error}"));
+            set_status(&app, &format!("Не удалось добавить сочетание клавиш в GNOME: {error}"));
         }
     }
     if let Some(window) = app.get_webview_window("setup") {
@@ -783,7 +783,7 @@ fn setup(app: &mut tauri::App, options: Options) -> Result<(), Box<dyn std::erro
         Method::Grab => {
             let hotkey = shell.hotkey();
             if let Err(error) = app.global_shortcut().register(hotkey.as_str()) {
-                set_status(&handle, &format!("The shortcut {} is taken", shortcut_text(&hotkey)));
+                set_status(&handle, &format!("Сочетание {} уже занято", shortcut_text(&hotkey)));
                 eprintln!("digup-shell: can't use {hotkey} as the shortcut: {error}");
             }
         }
@@ -795,7 +795,7 @@ fn setup(app: &mut tauri::App, options: Options) -> Result<(), Box<dyn std::erro
         Method::Kde => {
             let pressed = handle.clone();
             if let Err(error) = hotkey::kde::listen(&shell.hotkey(), move || toggle_panel(&pressed)) {
-                set_status(&handle, &format!("The shortcut couldn't be added to KDE's settings: {error}"));
+                set_status(&handle, &format!("Не удалось добавить сочетание клавиш в KDE: {error}"));
                 eprintln!("digup-shell: can't add the shortcut to KDE's: {error}");
             }
         }
@@ -924,7 +924,7 @@ fn run_index(app: &AppHandle) {
         return;
     }
     if let Err(error) = shell.index.run(&shell.index_launch()) {
-        set_status(app, &format!("Indexing couldn't start: {error}"));
+        set_status(app, &format!("Просмотр не запустился: {error}"));
     }
 }
 
@@ -935,7 +935,7 @@ fn sync_code(app: &AppHandle) {
         return;
     }
     if let Err(error) = shell.index.sync_code(&shell.index_launch()) {
-        set_status(app, &format!("Indexing couldn't start: {error}"));
+        set_status(app, &format!("Просмотр не запустился: {error}"));
     }
 }
 
@@ -1193,7 +1193,7 @@ fn show_setup(app: &AppHandle) -> tauri::Result<()> {
     }
     let hidden = app.state::<Arc<Shell>>().options.debug_setup;
     WebviewWindowBuilder::new(app, "setup", WebviewUrl::App("setup.html".into()))
-        .title("Set Up DigUp")
+        .title("Настройка DigUp")
         .inner_size(720.0, 600.0)
         .resizable(false)
         .maximizable(false)
@@ -1291,7 +1291,7 @@ fn show_settings(app: &AppHandle) -> tauri::Result<()> {
     }
     let options = &app.state::<Arc<Shell>>().options;
     WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-        .title("DigUp Settings")
+        .title("Настройки DigUp")
         .inner_size(660.0, 620.0)
         .resizable(false)
         .maximizable(false)
@@ -1385,7 +1385,7 @@ fn hold_hotkey(app: AppHandle, shell: State<'_, Arc<Shell>>, held: bool) {
 #[tauri::command]
 fn set_hotkey(app: AppHandle, shell: State<'_, Arc<Shell>>, hotkey: String) -> Result<String, String> {
     if shell.shortcut != Method::Grab {
-        return Err("This desktop keeps the shortcut in its own settings.".into());
+        return Err("Здесь сочетание клавиш меняется в настройках системы.".into());
     }
     let old = shell.hotkey();
     if hotkey != old {
@@ -1703,22 +1703,21 @@ fn shortcut_text(accelerator: &str) -> String {
 // MARK: The tray
 
 fn make_tray(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
-    let status = MenuItem::with_id(app, "status", "Starting…", false, None::<&str>)?;
+    let status = MenuItem::with_id(app, "status", "Запуск…", false, None::<&str>)?;
     // The shortcut beside Search… only where DigUp grabs it: elsewhere the desktop has it, maybe changed there.
     let accelerator = (shell.shortcut == Method::Grab).then(|| shell.hotkey());
-    let search = MenuItem::with_id(app, "search", "Search…", true, accelerator.as_deref())?;
-    let open = MenuItem::with_id(app, "open", "Open DigUp", true, None::<&str>)?;
+    let search = MenuItem::with_id(app, "search", "Поиск…", true, accelerator.as_deref())?;
+    let open = MenuItem::with_id(app, "open", "Открыть окно поиска", true, None::<&str>)?;
     let analysis = MenuItem::with_id(app, "analysis", "Анализ фото…", true, None::<&str>)?;
-    let folders = MenuItem::with_id(app, "folders", "Choose Folders…", true, None::<&str>)?;
-    let index = MenuItem::with_id(app, "index", "Index Now", true, None::<&str>)?;
-    let pause = MenuItem::with_id(app, "pause", "Pause Indexing", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    let check = MenuItem::with_id(app, "check", "Check for Updates…", true, None::<&str>)?;
-    let quit_item = MenuItem::with_id(app, "quit", "Quit DigUp", true, None::<&str>)?;
+    let folders = MenuItem::with_id(app, "folders", "Выбрать папки…", true, None::<&str>)?;
+    let index = MenuItem::with_id(app, "index", "Просмотреть сейчас", true, None::<&str>)?;
+    let pause = MenuItem::with_id(app, "pause", "Приостановить просмотр", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Настройки…", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(
         app,
-        &[&status, &separator, &analysis, &search, &open, &folders, &index, &pause, &settings, &check,
+        &[&status, &separator, &analysis, &search, &open, &folders, &index, &pause, &settings,
           &PredefinedMenuItem::separator(app)?, &quit_item],
     )?;
     // DigUp's logo, in its colors (tray_icon.rs).
@@ -1843,7 +1842,7 @@ fn changed(app: &AppHandle) {
         let _ = index.set_enabled(folders && snapshot["busy"] == false);
     }
     if let Some(pause) = shell.pause_item.lock().unwrap().as_ref() {
-        let _ = pause.set_text(if snapshot["paused"] == true { "Resume Indexing" } else { "Pause Indexing" });
+        let _ = pause.set_text(if snapshot["paused"] == true { "Продолжить просмотр" } else { "Приостановить просмотр" });
         let _ = pause.set_enabled(folders);
     }
     update_line(app, &shell);

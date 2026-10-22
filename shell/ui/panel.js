@@ -14,8 +14,8 @@ const WEAKER = "\u0000weaker";     // the selectable row that folds and unfolds 
 // Wayland: the window fills the screen and this page places the panel (the shell's wayland.rs).
 const fillsScreen = new URLSearchParams(location.search).has("fills");
 // A group's name in the window's kind filters.
-const FILTER_OF = { Screenshots: "screenshots", Images: "images", Documents: "documents", Video: "video",
-                    Audio: "audio" };
+const FILTER_OF = { "Скриншоты": "screenshots", "Фото": "images", "Документы": "documents", "Видео": "video",
+                    "Аудио": "audio" };
 
 const $ = (id) => document.getElementById(id);
 const $panel = $("panel"), $query = $("query"), $body = $("body"), $list = $("list"), $preview = $("preview");
@@ -89,7 +89,7 @@ function show(reply, text, phase) {
   // Grouped by kind, the best hit's group first; code is one group with the room of all of them.
   const groups = new Map();
   for (const hit of state.strong) {
-    const title = GROUP_OF[hit.kind] || "Files";
+    const title = GROUP_OF[hit.kind] || "Файлы";
     if (!groups.has(title)) groups.set(title, []);
     groups.get(title).push(hit);
   }
@@ -194,8 +194,8 @@ function renderList() {
     for (const hit of group.rows) $list.append(row(hit));
     // More of this kind than the panel has room for: all of them in the window.
     if (group.total > group.rows.length && FILTER_OF[group.title]) {
-      const more = element("div", "more", `Show all ${group.total} ${group.title.toLowerCase()}…`);
-      more.title = `Open them in the DigUp window (${MOD}O shows everything)`;
+      const more = element("div", "more", `Показать все: ${group.title.toLowerCase()} (${group.total})…`);
+      more.title = `Открыть в окне программы (${MOD}O — показать всё)`;
       more.onclick = () => openInWindow(FILTER_OF[group.title]);
       $list.append(more);
     }
@@ -204,7 +204,7 @@ function renderList() {
     const fold = element("div", "weaker" + (state.showWeaker ? " open" : "") + (state.selection === WEAKER ? " selected" : ""));
     fold.innerHTML = ICONS.chevron;
     const count = state.weaker.length;
-    fold.append(state.showWeaker ? "Weaker matches" : `${count} weaker ${count === 1 ? "match" : "matches"}`);
+    fold.append(state.showWeaker ? "Менее похожие" : `Менее похожие: ${count}`);
     fold.onclick = toggleWeaker;
     $list.append(fold);
     if (state.showWeaker) for (const hit of state.weaker) $list.append(row(hit));
@@ -254,30 +254,30 @@ function renderPreview() {
   $preview.replaceChildren();
   if (!state.strong.length && !state.weaker.length) {
     if (state.isCode && !state.hasCode) {
-      $preview.append(message("Code search is off", "Choose folders with code in Settings → Code, and DigUp finds "
-        + "code by what it does."));
+      $preview.append(message("Поиск по коду выключен", "В этой версии программа ищет только "
+        + "фото и видео."));
     } else if (state.phase === "codeHint") {
-      $preview.append(message("Search your code", "Say what the code does, or type a name that's in it."));
+      $preview.append(message("Поиск по коду", "В этой версии программа ищет только фото и видео."));
     } else if (state.phase === "words") {
       // The words are in and the meaning results on their way (as on the Mac): no verdict yet.
       const box = element("div", "message");
-      box.append(element("span", "", "Searching…"));
+      box.append(element("span", "", "Ищу…"));
       $preview.append(box);
     } else if (state.indexing) {
       const { done, total } = state.indexing;
-      $preview.append(message("Nothing yet", `Still indexing (${done} of ${total} files). Until a file is read, `
-        + "DigUp finds it only by its name."));
+      $preview.append(message("Пока ничего", `Программа ещё смотрит файлы (${done} из ${total}). Пока файл не просмотрен, `
+        + "его можно найти только по имени."));
     } else if (state.isCode) {
-      $preview.append(message("No good matches in your code", "Try saying what the code does, or a name that's in it."));
+      $preview.append(message("Ничего похожего", "Попробуйте описать иначе."));
     } else {
-      $preview.append(message("No good matches", "Try what you'd see or hear in it, or words you remember from it."));
+      $preview.append(message("Ничего похожего", "Опишите, что видно на фото или в видео, или слова, которые там были."));
     }
     return;
   }
   if (state.selection === WEAKER) {
     const count = state.weaker.length;
-    $preview.append(message(state.showWeaker ? "Weaker matches" : `${count} weaker ${count === 1 ? "match" : "matches"}`,
-      "They match much less well than the results above. Press Return to " + (state.showWeaker ? "fold them away." : "show them.")));
+    $preview.append(message(state.showWeaker ? "Менее похожие" : `Менее похожие: ${count}`,
+      "Они подходят намного хуже результатов выше. Нажмите Enter, чтобы " + (state.showWeaker ? "свернуть их." : "показать.")));
     return;
   }
   const hit = selectedHit();
@@ -357,7 +357,7 @@ function facts(hit) {
   const buttons = element("div", "buttons");
   const open = element("button", "", "Open");
   open.onclick = openSelected;
-  const reveal = element("button", "", `Show in ${FILE_MANAGER}`);
+  const reveal = element("button", "", `Показать в ${FILE_MANAGER}`);
   reveal.onclick = revealSelected;
   buttons.append(open, reveal);
   box.append(buttons);
@@ -367,16 +367,16 @@ function facts(hit) {
 function renderFooter() {
   const strong = state.strong.length, weaker = state.weaker.length;
   let summary;
-  if (state.error) summary = `DigUp's helper: ${state.error}`;
+  if (state.error) summary = `Ошибка помощника: ${state.error}`;
   else if (state.phase === "words") {
-    summary = state.encoder === "starting" ? "Matching words; meaning search is warming up…" : "Matching words…";
-  } else if (state.phase === "wordsOnly") summary = "Words only: meaning search isn't available";
-  else if (state.phase === "codeHint") summary = "Searching your code";
+    summary = state.encoder === "starting" ? "Ищу по словам; поиск по смыслу запускается…" : "Ищу по словам…";
+  } else if (state.phase === "wordsOnly") summary = "Только по словам: поиск по смыслу недоступен";
+  else if (state.phase === "codeHint") summary = "Поиск по коду";
   // Results while indexing (or before the model is in) may be missing some: that, where they're counted.
   else if (state.caveat && !state.isCode) summary = state.caveat;
-  else summary = `${strong} ${strong === 1 ? "result" : "results"}` + (weaker ? ` · ${weaker} weaker` : "");
+  else summary = `Найдено: ${strong}` + (weaker ? ` · менее похожих: ${weaker}` : "");
   $summary.textContent = summary;
-  $keys.textContent = `↩ Open   ${MOD}↩ Show in ${FILE_MANAGER}   ␣ Preview`;
+  $keys.textContent = `↩ Открыть   ${MOD}↩ Показать в ${FILE_MANAGER}   ␣ Просмотр`;
 }
 
 // MARK: The big preview (Space, as Quick Look on the Mac)

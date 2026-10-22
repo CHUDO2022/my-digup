@@ -12,11 +12,10 @@ const isWindows = /Win/.test(navigator.platform);
 const $ = (id) => document.getElementById(id);
 
 const notes = {
-  gnome: "DigUp added it to GNOME's keyboard shortcuts. To change it: Settings → Keyboard → View and Customize " +
-    "Shortcuts → Custom Shortcuts.",
-  kde: "DigUp added it to KDE's shortcuts. To change it: System Settings → Shortcuts → DigUp.",
-  by_hand: "This desktop doesn't let apps set their own shortcuts. To open the panel with one, add a shortcut in its " +
-    "keyboard settings that runs:",
+  gnome: "Сочетание добавлено в настройки GNOME: Настройки → Клавиатура → Свои сочетания.",
+  kde: "Сочетание добавлено в настройки KDE: Параметры системы → Комбинации клавиш → DigUp.",
+  by_hand: "Здесь программы не могут сами задать сочетание клавиш. Добавьте в настройках клавиатуры " +
+    "сочетание, которое запускает:",
 };
 
 let info = {};
@@ -137,12 +136,12 @@ function renderStatus() {
   $("status-line").textContent = state.line || "";
   $("status-bar").hidden = state.progress == null;
   $("status-fill").style.width = `${Math.round(100 * (state.progress || 0))}%`;
-  const parts = [`${(state.searchable || 0).toLocaleString()} of ${(state.files || 0).toLocaleString()} files searchable`];
+  const parts = [`Можно искать: ${(state.searchable || 0).toLocaleString()} из ${(state.files || 0).toLocaleString()}`];
   if (state.pending) parts.push(`${state.pending.toLocaleString()} waiting`);
-  if (state.unfinished) parts.push(`${state.unfinished.toLocaleString()} long ${state.unfinished === 1 ? "file" : "files"} to finish`);
+  if (state.unfinished) parts.push(`дочитать длинных файлов: ${state.unfinished.toLocaleString()}`);
   $("status-detail").textContent = parts.join(" · ");
   $("pause").hidden = !info.folders?.length;
-  $("pause").textContent = state.paused ? "Resume" : "Pause";
+  $("pause").textContent = state.paused ? "Продолжить" : "Пауза";
 }
 
 $("pause").onclick = () => invoke("pause_indexing", { paused: !(info.state || {}).paused }).catch(fail);
@@ -159,7 +158,7 @@ async function loadSummaries() {
 function renderFolders() {
   const rows = $("folder-rows");
   rows.replaceChildren();
-  if (!info.folders?.length) rows.append(element("div", "empty", "No folders yet. Add the ones DigUp should search."));
+  if (!info.folders?.length) rows.append(element("div", "empty", "Папок пока нет. Добавьте папки с фото и видео."));
   for (const folder of info.folders || []) {
     const summary = (summaries || []).find((item) => samePath(item.path, folder)) || null;
     rows.append(folderRow(folder, summary));
@@ -168,13 +167,13 @@ function renderFolders() {
   const skipped = $("skipped-rows");
   skipped.replaceChildren();
   if (!info.skipped?.length) {
-    skipped.append(element("div", "empty", "None. Code projects, app bundles and caches are skipped anyway."));
+    skipped.append(element("div", "empty", "Нет. Папки программ и кэши пропускаются и так."));
   }
   for (const folder of info.skipped || []) {
     const row = element("div", "row");
     const text = element("div", "text");
     text.append(element("div", "path", shown(folder)));
-    row.append(text, removeButton("Search this folder again", () => {
+    row.append(text, removeButton("Снова смотреть эту папку", () => {
       setSkipped(info.skipped.filter((path) => path !== folder));
     }));
     skipped.append(row);
@@ -196,20 +195,20 @@ function renderFields() {
 /// One line per reason: what the crawl never queued from the folder, then what was skipped once read.
 function reasonLines(leftOut, skippedReasons) {
   const crawl = {
-    "other type": "of types DigUp doesn't read",
-    "app or bundle": "inside apps or bundles",
-    "Photos library": "in a Photos library",
-    "link or special file": "links or special files",
-    "in the cloud, not downloaded": "only in the cloud, not downloaded",
-    "inside a code project": "inside code projects, where only screenshots count",
-    "dataset": "in folders that look like datasets",
-    "code or data file": "code or data files",
-    "excluded type": "of the file types you skip",
+    "other type": "— не фото и не видео",
+    "app or bundle": "— внутри программ",
+    "Photos library": "— в медиатеке Фото",
+    "link or special file": "— ссылки и особые файлы",
+    "in the cloud, not downloaded": "— только в облаке, не скачаны",
+    "inside a code project": "— внутри проектов с кодом",
+    "dataset": "— в папках, похожих на наборы данных",
+    "code or data file": "— код и данные",
+    "excluded type": "— типы, которые вы пропускаете",
   };
   const byCount = (a, b) => b[1] - a[1];
   const left = Object.entries(leftOut).sort(byCount).map(([reason, count]) =>
-    reason.startsWith("folders ") ? `${count.toLocaleString()} folders weren't opened (${reason.slice(8)})` : `${count.toLocaleString()} ${crawl[reason] || reason}`);
-  const skipped = Object.entries(skippedReasons).sort(byCount).map(([reason, count]) => `${count.toLocaleString()} skipped: ${reason}`);
+    reason.startsWith("folders ") ? `Не открыто папок: ${count.toLocaleString()} (${reason.slice(8)})` : `${count.toLocaleString()} ${crawl[reason] || reason}`);
+  const skipped = Object.entries(skippedReasons).sort(byCount).map(([reason, count]) => `Пропущено ${count.toLocaleString()}: ${reason}`);
   return left.concat(skipped);
 }
 
@@ -217,12 +216,12 @@ function folderRow(folder, summary, code = false) {
   const row = element("div", "row");
   const text = element("div", "text");
   const name = element("div", "name", nameOf(folder));
-  if (summary?.missing || summary?.unreadable) name.append(element("span", "flag", summary.missing ? "Not connected" : "No access"));
+  if (summary?.missing || summary?.unreadable) name.append(element("span", "flag", summary.missing ? "Не подключена" : "Нет доступа"));
   text.append(name, element("div", "path", shown(folder)));
   if (summary && Object.keys(summary.kinds || {}).length) text.append(element("div", "counts", countsText(summary.kinds)));
   const side = element("div", "side");
   if (summary) {
-    side.append(element("div", "indexed", summary.missing || summary.unreadable ? "Kept for when it's back"
+    side.append(element("div", "indexed", summary.missing || summary.unreadable ? "Сохранено до подключения"
       : `${summary.indexed.toLocaleString()} of ${summary.files.toLocaleString()} indexed`));
     // What the last sync never queued from this folder, by reason (the helper's left_out, through the status).
     const leftOutKey = Object.keys((info.state || {}).leftOut || {}).find((path) => samePath(path, folder));
@@ -230,17 +229,17 @@ function folderRow(folder, summary, code = false) {
     const notRead = Object.values(leftOut).reduce((sum, count) => sum + count, 0);
     const states = [
       summary.pending ? `${summary.pending.toLocaleString()} waiting` : null,
-      summary.unfinished ? `${summary.unfinished.toLocaleString()} long ${summary.unfinished === 1 ? "file" : "files"} to finish` : null,
+      summary.unfinished ? `дочитать: ${summary.unfinished.toLocaleString()}` : null,
       summary.skipped ? `${summary.skipped.toLocaleString()} skipped` : null,
-      summary.failed ? `${summary.failed.toLocaleString()} couldn't be read` : null,
-      notRead ? `${notRead.toLocaleString()} not read` : null,
+      summary.failed ? `не прочитались: ${summary.failed.toLocaleString()}` : null,
+      notRead ? `не прочитано: ${notRead.toLocaleString()}` : null,
     ].filter(Boolean).join(" · ");
     if (states) {
       const line = element("div", "states", states);
       const reasons = reasonLines(leftOut, summary.skipped_reasons || {});
       if (reasons.length) {
         const why = element("button", "why", "why");
-        why.title = "Why some files aren't searchable";
+        why.title = "Почему часть файлов не ищется";
         const list = element("div", "reasons");
         list.hidden = true;
         for (const reason of reasons) list.append(element("div", null, reason));
@@ -251,7 +250,7 @@ function folderRow(folder, summary, code = false) {
       side.append(line);
     }
   }
-  row.append(text, side, removeButton(code ? "Stop searching the code in this folder" : "Stop searching this folder", () => {
+  row.append(text, side, removeButton(code ? "Не искать код в этой папке" : "Убрать папку", () => {
     if (code) {
       removingCode = folder;
       renderCode();
@@ -266,11 +265,11 @@ function folderRow(folder, summary, code = false) {
 /// "Stop searching “Pictures”?", in place, as the Mac app asks.
 function confirmRemoval(folder, summary, code = false) {
   const box = element("div", "confirm");
-  const files = summary ? `Its ${summary.files.toLocaleString()} ${summary.files === 1 ? "file leaves" : "files leave"}` : "Its files leave";
+  const files = summary ? `Её файлы (${summary.files.toLocaleString()}) уйдут из` : "Её файлы уйдут из";
   const last = code && (info.code?.folders || []).length === 1;
   box.append(element("p", "", code
-    ? `Stop searching the code in “${nameOf(folder)}”? ${files} the code index.${last ? " That turns code search off." : ""}`
-    : `Stop searching “${nameOf(folder)}”? ${files} the index. Adding it back later indexes them again.`));
+    ? `Не искать код в «${nameOf(folder)}»? ${files} индекса кода.`
+    : `Убрать папку «${nameOf(folder)}»? ${files} индекса. Если вернуть её позже, программа просмотрит их заново.`));
   const actions = element("div", "actions");
   const cancel = element("button", "", "Cancel");
   cancel.onclick = () => {
@@ -428,13 +427,13 @@ $("code-off-go").onclick = async () => {
 
 function renderStorage() {
   const storage = info.storage || {}, model = (info.state || {}).model || {};
-  const states = { ready: "Downloaded", checking: "Checking…", waiting: "Waiting for the network", failed: "The download stopped" };
+  const states = { ready: "Скачана", checking: "Проверяю…", waiting: "Жду интернет", failed: "Не скачалась" };
   $("model-status").textContent = model.state === "downloading"
-    ? `Downloading · ${model.total ? Math.floor((100 * model.bytes) / model.total) : 0}%` : states[model.state] || "";
+    ? `Скачиваю · ${model.total ? Math.floor((100 * model.bytes) / model.total) : 0}%` : states[model.state] || "";
   pathButton($("model-path"), storage.models);
-  $("index-size").textContent = bytes(storage.indexBytes || 0) + (storage.codeBytes ? ` (code ${bytes(storage.codeBytes)})` : "");
+  $("index-size").textContent = bytes(storage.indexBytes || 0) + (storage.codeBytes ? ` (код ${bytes(storage.codeBytes)})` : "");
   pathButton($("index-path"), storage.index);
-  $("version").textContent = `DigUp ${info.version || ""} · EmbeddingGemma 2 by Google (Apache 2.0), run by llama.cpp (MIT).`;
+  $("version").textContent = `Своя версия DigUp ${info.version || ""} (MIT, ARahim3/DigUp) · EmbeddingGemma 2 и Gemma 3 от Google · llama.cpp (MIT).`;
   $("licenses").hidden = !info.licenses;
 }
 
@@ -445,7 +444,7 @@ function pathButton(button, path) {
   const inner = document.createElement("bdi");
   inner.textContent = shown(path);
   button.append(inner);
-  button.title = isWindows ? "Show in Explorer" : "Show in Files";
+  button.title = isWindows ? "Показать в Проводнике" : "Показать в папке";
   button.onclick = () => invoke("reveal", { path }).catch(fail);
 }
 
@@ -454,19 +453,15 @@ function pathButton(button, path) {
 function countsText(kinds) {
   const part = (count, one, many) => (count > 0 ? `${count.toLocaleString()} ${count === 1 ? one : many}` : null);
   return [
-    part((kinds.image || 0) + (kinds.screenshot || 0), "picture", "pictures"),
-    part(kinds.pdf, "PDF", "PDFs"),
-    part(kinds.doc, "document", "documents"),
-    part(kinds.audio, "recording", "recordings"),
-    part(kinds.video, "video", "videos"),
-    part(kinds.code, "file of code", "files of code"),
+    part((kinds.image || 0) + (kinds.screenshot || 0), "фото", "фото"),
+    part(kinds.video, "видео", "видео"),
   ].filter(Boolean).join(" · ");
 }
 
 /// Sizes the way file managers count them: "62 KB", "2.1 MB".
 function bytes(count) {
-  if (count < 1000) return `${count} bytes`;
-  const units = ["KB", "MB", "GB", "TB"];
+  if (count < 1000) return `${count} Б`;
+  const units = ["КБ", "МБ", "ГБ", "ТБ"];
   let value = count / 1000, unit = 0;
   while (value >= 1000 && unit < units.length - 1) { value /= 1000; unit += 1; }
   return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;

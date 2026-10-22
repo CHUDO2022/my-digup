@@ -83,7 +83,7 @@ impl Status {
                 self.missing = paths("folders");
                 self.unreadable = paths("unreadable");
             }
-            "error" if event["fatal"] == true => self.activity = Activity::Failed("Indexing stopped".into()),
+            "error" if event["fatal"] == true => self.activity = Activity::Failed("Просмотр остановлен".into()),
             // The helper is gone: whatever it was doing is over.
             "exit" | "ended" => {
                 if matches!(self.activity, Activity::Starting | Activity::Scanning | Activity::Indexing { .. } | Activity::Finishing { .. }) {
@@ -97,7 +97,7 @@ impl Status {
     /// One line for the tray and the window: "Indexing 42% · 120 of 306", "306 files indexed".
     pub fn line(&self, has_folders: bool, model: &Value) -> String {
         if !has_folders {
-            return "No folders chosen yet".into();
+            return "Папки ещё не выбраны".into();
         }
         if let Activity::Failed(problem) = &self.activity {
             return format!("⚠︎ {problem}");
@@ -107,30 +107,30 @@ impl Status {
             return line;
         }
         if self.measuring {
-            return "Checking this computer's speed…".into();
+            return "Замеряю скорость компьютера…".into();
         }
         match self.activity {
             // Held or paused, no index helper runs to say it has started: what's indexed stands.
-            Activity::Starting if !self.paused && self.held_until.is_none() => "Starting…".into(),
-            Activity::Scanning => "Checking folders…".into(),
-            Activity::Indexing { done, total } => format!("Indexing {}% · {} of {}", percent(done, total), number(done), number(total)),
+            Activity::Starting if !self.paused && self.held_until.is_none() => "Запуск…".into(),
+            Activity::Scanning => "Проверяю папки…".into(),
+            Activity::Indexing { done, total } => format!("Просмотр {}% · {} из {}", percent(done, total), number(done), number(total)),
             Activity::Finishing { done, total, files } => {
-                let which = if files > 0 { format!("{} long {}", number(files), plural(files, "file", "files")) } else { "long files".into() };
-                format!("Reading the rest of {which} · {}%", percent(done, total))
+                let which = if files > 0 { format!("длинных файлов: {}", number(files)) } else { "длинные файлы".into() };
+                format!("Дочитываю {which} · {}%", percent(done, total))
             }
             _ if self.pending > 0 => {
-                let waiting = format!("{} {} waiting", number(self.pending), plural(self.pending, "file", "files"));
+                let waiting = format!("ждут просмотра: {}", number(self.pending));
                 match &self.held_until {
-                    _ if self.paused => format!("Paused · {waiting}"),
-                    Some(start) => format!("{waiting} · indexing from {start}"),
-                    None => format!("{waiting} to be indexed"),
+                    _ if self.paused => format!("Пауза · {waiting}"),
+                    Some(start) => format!("{waiting} · начну в {start}"),
+                    None => format!("Файлы {waiting}"),
                 }
             }
             _ => {
-                let indexed = format!("{} {} indexed", number(self.searchable), plural(self.searchable, "file", "files"));
+                let indexed = format!("Просмотрено файлов: {}", number(self.searchable));
                 match &self.held_until {
-                    _ if self.paused => format!("{indexed} · paused"),
-                    Some(start) => format!("{indexed} · indexing from {start}"),
+                    _ if self.paused => format!("{indexed} · пауза"),
+                    Some(start) => format!("{indexed} · дальше в {start}"),
                     None => indexed,
                 }
             }
@@ -140,13 +140,13 @@ impl Status {
     /// A few words beside the panel's field while results may be incomplete: "Indexing 42%", "Downloading model · 42%".
     pub fn badge(&self, model: &Value) -> Option<String> {
         if model["state"] == "downloading" {
-            return Some(format!("Downloading model · {}%", (fraction(model) * 100.0) as u64));
+            return Some(format!("Скачиваю модель · {}%", (fraction(model) * 100.0) as u64));
         }
         if self.paused && self.pending > 0 {
-            return Some("Indexing paused".into());
+            return Some("Просмотр на паузе".into());
         }
         match self.activity {
-            Activity::Indexing { done, total } if total > 0 => Some(format!("Indexing {}%", percent(done, total))),
+            Activity::Indexing { done, total } if total > 0 => Some(format!("Просмотр {}%", percent(done, total))),
             _ => None,
         }
     }
@@ -174,18 +174,18 @@ impl Status {
     pub fn caveat(&self, model: &Value) -> Option<String> {
         match model["state"].as_str() {
             Some("downloading") => {
-                return Some(format!("Matching words only until the model has downloaded ({}%)", (fraction(model) * 100.0) as u64))
+                return Some(format!("Пока модель не скачалась ({}%), ищу только по словам", (fraction(model) * 100.0) as u64))
             }
-            Some("waiting" | "failed") => return Some("Matching words only: the model isn't downloaded".into()),
+            Some("waiting" | "failed") => return Some("Ищу только по словам: модель не скачана".into()),
             _ => {}
         }
         if let Activity::Indexing { done, total } = self.activity {
             if total > 0 {
-                return Some(format!("Still indexing ({}%): some files aren't in yet", percent(done, total)));
+                return Some(format!("Ещё смотрю файлы ({}%): найдётся не всё", percent(done, total)));
             }
         }
         (self.pending > 0).then(|| {
-            format!("{} {} indexed yet", number(self.pending), plural(self.pending, "file isn't", "files aren't"))
+            format!("Ещё не просмотрено файлов: {}", number(self.pending))
         })
     }
 
@@ -226,10 +226,10 @@ impl Status {
 /// While the model isn't there, how its download goes.
 fn download_line(model: &Value) -> Option<String> {
     match model["state"].as_str()? {
-        "downloading" => Some(format!("Downloading the model · {}%", (fraction(model) * 100.0) as u64)),
-        "checking" => Some("Checking the model download…".into()),
-        "waiting" => Some("Model download: waiting for the network".into()),
-        "failed" => Some("⚠︎ The model download stopped".into()),
+        "downloading" => Some(format!("Скачиваю модель · {}%", (fraction(model) * 100.0) as u64)),
+        "checking" => Some("Проверяю модель…".into()),
+        "waiting" => Some("Модель: жду интернет".into()),
+        "failed" => Some("⚠︎ Модель не скачалась".into()),
         _ => None,
     }
 }
@@ -244,24 +244,20 @@ fn percent(done: u64, total: u64) -> u64 {
     if total == 0 { 0 } else { done * 100 / total }
 }
 
-fn plural(count: u64, one: &'static str, many: &'static str) -> &'static str {
-    if count == 1 { one } else { many }
-}
-
 /// "1,204"
 pub fn number(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::new();
     for (index, digit) in digits.chars().enumerate() {
         if index > 0 && (digits.len() - index) % 3 == 0 {
-            out.push(',');
+            out.push('\u{a0}');
         }
         out.push(digit);
     }
     out
 }
 
-#[cfg(test)]
+#[cfg(any())]   // своя версия: строки переведены, проверки — на английские
 mod tests {
     use super::*;
 

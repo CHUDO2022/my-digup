@@ -22,7 +22,8 @@ extension Rules {
         "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv", "3gp", "3g2", "mpg", "mpeg", "m2v", "ogv", "mxf",
     ]
 
-    /// `classify` as on macOS, by extension (for files with one, macOS's types come from the extension too).
+    /// `classify` as on macOS, by extension (for files with one, macOS's types come from the extension too). Своя
+    /// версия: only pictures and videos — documents, PDFs, audio and code aren't read at all.
     static func classify(_ url: URL, values: URLResourceValues?, options: IndexOptions) -> Classification {
         let ext = url.pathExtension.lowercased()
         if options.excludedExtensions.contains(ext) { return .skip("excluded type") }
@@ -31,17 +32,10 @@ extension Rules {
         if ext == "ts" || ext == "mts" || ext == "m2ts" {
             // The look inside would download a cloud placeholder; the crawl leaves placeholders alone anyway.
             if FileSystem.info(of: url.path)?.dataless == true { return .skip("in the cloud, not downloaded") }
-            if isMPEGTransportStream(url) { return .index(.video) }
-            return options.includeCode ? .index(.doc) : .skip("code or data file")
+            return isMPEGTransportStream(url) ? .index(.video) : .ignore
         }
-        if docExtensions.contains(ext) { return .index(.doc) }
-        if codeExtensions.contains(ext) || sourceExtensions.contains(ext) {
-            return options.includeCode ? .index(.doc) : .skip("code or data file")
-        }
-        if ext == "pdf" { return .index(.pdf) }
         if imageExtensions.contains(ext) { return .index(isScreenshot(url) ? .screenshot : .image) }
         if videoExtensions.contains(ext) { return .index(.video) }
-        if audioExtensions.contains(ext) { return .index(.audio) }
         return .ignore
     }
 
