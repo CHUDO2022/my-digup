@@ -380,7 +380,7 @@ extension Analysis {
     /// washed-out pictures, short accidental videos, screenshots and the heaviest videos. Nothing is removed here: the
     /// window shows the lists and the person decides. Each list of extras names the copy worth keeping.
     enum Junk {
-        static let blurry = 40.0          // Laplacian variance on the ~320-pixel grid
+        static let blurryBelow = 40.0          // Laplacian variance on the ~320-pixel grid
         static let darkMean = 28.0
         static let washedOut = 0.85       // share of nearly white pixels
         static let shortVideo = 3.0       // seconds
@@ -398,7 +398,7 @@ extension Analysis {
                 guard let q = quality[member.path] else { continue }
                 if q.brightness < darkMean || q.dark > 0.9 { dark.append(member.path) }
                 else if q.bright > washedOut { washed.append(member.path) }
-                else if q.sharpness < blurry { blurry.append(member.path) }
+                else if q.sharpness < blurryBelow { blurry.append(member.path) }
             }
             let shortVideos = members.filter { $0.kind == "video" && ($0.duration ?? 99) < shortVideo }.map(\.path)
             let screenshots = members.filter { $0.kind == "screenshot" }.sorted { $0.mtime < $1.mtime }.map(\.path)

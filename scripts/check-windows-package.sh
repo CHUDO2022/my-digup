@@ -35,7 +35,7 @@ TEXT
 echo "first launch"
 started=$(date +%s)
 "$installed/DigUp.exe" --index "$(win "$work/index")" --models "$models" --settings "$(win "$work/settings.json")" \
-  --offer "$(win "$work/files")" --hotkey "Ctrl+Alt+Shift+D" --debug-setup --debug-query "how long to bake the cake" \
+  --offer "$(win "$work/files")" --hotkey "Ctrl+Alt+Shift+D" --debug-setup --debug-query "photo" \
   --debug-quit > "$work/out.txt" 2> "$work/err.txt" &
 app=$!
 report=
@@ -60,8 +60,9 @@ if [[ -z $report ]]; then
   exit 1
 fi
 echo "panel: $report"
-if [[ $report != *'"recipe.txt"'* ]]; then
-  echo "the panel didn't find recipe.txt"
+# Своя версия читает только фото и видео: recipe.txt и speech.wav не индексируются.
+if [[ $report != *'"photo.jpg"'* ]]; then
+  echo "the panel didn't find photo.jpg"
   exit 1
 fi
 
@@ -69,7 +70,7 @@ echo "the helper with only Windows on PATH"
 helper=$installed/helper/digup.exe
 PATH="/c/Windows/System32:/c/Windows:/c/Windows/System32/Wbem" "$helper" status --index "$(win "$work/index")" \
   | tee "$work/status.txt"
-grep -Eq '^vectors: 5 in 5 segments' "$work/status.txt" || { echo "not every file has a vector"; exit 1; }
+grep -Eq '^vectors: 3 in 3 segments' "$work/status.txt" || { echo "not every file has a vector"; exit 1; }
 PATH="/c/Windows/System32:/c/Windows:/c/Windows/System32/Wbem" DIGUP_MODELS="$models" \
-  "$helper" search "how long to bake the cake" --index "$(win "$work/index")" -n 3
+  "$helper" search "photo" --index "$(win "$work/index")" -n 3
 echo "ok"
