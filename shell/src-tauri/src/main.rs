@@ -62,6 +62,9 @@ struct Shell {
     search: SearchService,
     index: IndexService,
     model: ModelDownload,
+    /// The photo analysis (своя версия): `digup analyze`, one run at a time, and what it last said.
+    analysis: ModelDownload,
+    analysis_state: Mutex<Value>,
     /// The model for the setup window and the tray: {"state": "checking|downloading|waiting|ready|failed", …}.
     model_state: Mutex<Value>,
     /// What indexing is doing, from the index helper's events (status.rs).
@@ -653,7 +656,8 @@ fn main() {
             app_state, open_window, open_settings, choose_folders, index_now, quit_app, close_window, pause_indexing,
             remove_folder, set_skipped, set_skip_types, set_index_hours, code_setup_info, set_code_folders, choose_code_folders,
             remove_code_folder, turn_off_code, set_code_editor, window_resized, copy_file, drag_out, set_hotkey, hold_hotkey,
-            set_tray_click, check_for_updates, offer_update, set_update_checks, open_licenses
+            set_tray_click, check_for_updates, offer_update, set_update_checks, open_licenses,
+            analysis_info, analysis_run, analysis_folder
         ])
         .build(tauri::generate_context!())
         .expect("DigUp couldn't start");
@@ -718,6 +722,10 @@ fn setup(app: &mut tauri::App, options: Options) -> Result<(), Box<dyn std::erro
         let app = handle.clone();
         move |event| model_event(&app, event)
     });
+    let analysis = ModelDownload::new({
+        let app = handle.clone();
+        move |event| analysis_event(&app, event)
+    });
     // Previews show files from the chosen folders (and the helper's renders, once it says where the index is).
     for root in &settings.folders {
         let _ = app.asset_protocol_scope().allow_directory(root, true);
@@ -735,6 +743,8 @@ fn setup(app: &mut tauri::App, options: Options) -> Result<(), Box<dyn std::erro
         search,
         index,
         model,
+        analysis,
+        analysis_state: Mutex::new(json!({"state": "idle"})),
         model_state: Mutex::new(json!({"state": "checking"})),
         watcher: Mutex::new(None),
         code_watcher: Mutex::new(None),
@@ -956,6 +966,7 @@ fn delete_code_index(shell: &Arc<Shell>) {
 fn stop_helpers(app: &AppHandle) {
     let shell = app.state::<Arc<Shell>>();
     shell.model.stop();
+    shell.analysis.stop();
     shell.index.stop();
     shell.search.stop();
 }
@@ -1193,6 +1204,85 @@ fn show_setup(app: &AppHandle) -> tauri::Result<()> {
 }
 
 /// Settings: opening at login, centering the panel (where the desktop places windows), and where the shortcut is.
+/// The photo analysis window (своя версия): groups of alike pictures named by a model, and what they take up.
+fn show_analysis(app: &AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("analysis") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(app, "analysis", WebviewUrl::App("analysis.html".into()))
+        .title("Анализ фото")
+        .inner_size(1080.0, 760.0)
+        .min_inner_size(720.0, 480.0)
+        .center()
+        .build()?;
+    Ok(())
+}
+
+fn analysis_file(shell: &Shell) -> Option<PathBuf> {
+    shell.options.index_folder().map(|index| index.join("analysis.json"))
+}
+
+/// What the analysis window shows: the indexed folders, the run going on (if any), and the last result.
+#[tauri::command]
+fn analysis_info(shell: State<'_, Arc<Shell>>) -> Value {
+    let result = analysis_file(&shell)
+        .and_then(|file| std::fs::read(file).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .unwrap_or(Value::Null);
+    json!({
+        "folders": shell.folders(),
+        "state": shell.analysis_state.lock().unwrap().clone(),
+        "result": result,
+    })
+}
+
+/// Runs `digup analyze` on these folders (all indexed ones when empty); its events reach the window as "analysis".
+#[tauri::command]
+fn analysis_run(app: AppHandle, shell: State<'_, Arc<Shell>>, folders: Vec<String>) -> Result<(), String> {
+    let mut args = vec!["analyze".to_string()];
+    args.extend(shell.index_arguments());
+    args.extend(folders);
+    let launch = shell.launch(args, "analysis.log");
+    *shell.analysis_state.lock().unwrap() = json!({"state": "running", "stage": "reading"});
+    let _ = app.emit("analysis", json!({"event": "stage", "stage": "reading"}));
+    shell.analysis.run(&launch)
+}
+
+/// A folder to analyze, picked in the system's dialog.
+#[tauri::command]
+async fn analysis_folder(app: AppHandle) -> Option<String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog().file().set_title("Папка для анализа").pick_folder(move |folder| {
+        let _ = sender.send(folder);
+    });
+    let picked = receiver.await.ok().flatten()?;
+    picked.into_path().ok().map(|path| path.display().to_string())
+}
+
+fn analysis_event(app: &AppHandle, event: Value) {
+    let shell = app.state::<Arc<Shell>>().inner().clone();
+    {
+        let mut state = shell.analysis_state.lock().unwrap();
+        match event["event"].as_str().unwrap_or_default() {
+            "stage" => *state = json!({"state": "running", "stage": event["stage"]}),
+            "progress" => {
+                state["download"] = json!({"bytes": event["all_bytes"], "total": event["all_total"]});
+            }
+            "named" => {
+                state["named"] = json!({"done": event["done"], "total": event["total"]});
+            }
+            "done" => *state = json!({"state": "done"}),
+            "error" => *state = json!({"state": "failed", "message": event["message"]}),
+            "stopped" => *state = json!({"state": "failed", "message": "анализ прервался"}),
+            _ => {}
+        }
+    }
+    let _ = app.emit("analysis", event);
+}
+
 fn show_settings(app: &AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.show();
@@ -1618,6 +1708,7 @@ fn make_tray(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     let accelerator = (shell.shortcut == Method::Grab).then(|| shell.hotkey());
     let search = MenuItem::with_id(app, "search", "Search…", true, accelerator.as_deref())?;
     let open = MenuItem::with_id(app, "open", "Open DigUp", true, None::<&str>)?;
+    let analysis = MenuItem::with_id(app, "analysis", "Анализ фото…", true, None::<&str>)?;
     let folders = MenuItem::with_id(app, "folders", "Choose Folders…", true, None::<&str>)?;
     let index = MenuItem::with_id(app, "index", "Index Now", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause Indexing", true, None::<&str>)?;
@@ -1627,7 +1718,7 @@ fn make_tray(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(
         app,
-        &[&status, &separator, &search, &open, &folders, &index, &pause, &settings, &check,
+        &[&status, &separator, &analysis, &search, &open, &folders, &index, &pause, &settings, &check,
           &PredefinedMenuItem::separator(app)?, &quit_item],
     )?;
     // DigUp's logo, in its colors (tray_icon.rs).
@@ -1641,6 +1732,9 @@ fn make_tray(app: &AppHandle, shell: &Arc<Shell>) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "search" => show_panel(app),
             "open" => show_window_or_setup(app),
+            "analysis" => later(app, |app| {
+                let _ = show_analysis(app);
+            }),
             "folders" => later(app, |app| {
                 let _ = show_setup(app);
             }),

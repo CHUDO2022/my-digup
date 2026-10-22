@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Анализ фото</title>
+  <link rel="stylesheet" href="analysis.css">
+</head>
+<body>
+  <header class="top">
+    <button class="back" id="back" hidden aria-label="Назад">
+      <svg viewBox="0 0 16 16"><path d="M10 3.5 L5.5 8 L10 12.5"/></svg>
+    </button>
+    <h1 id="title">Анализ фото</h1>
+    <span class="spacer"></span>
+    <label class="folder">
+      <span>Папка:</span>
+      <select id="folder"></select>
+    </label>
+    <button class="primary" id="run">Анализировать</button>
+  </header>
+
+  <div class="progress" id="progress" hidden>
+    <span class="ring"></span>
+    <span id="progress-text"></span>
+    <span class="bar"><span id="progress-bar"></span></span>
+  </div>
+
+  <main id="main">
+    <section id="overview"></section>
+    <section id="groups" class="groups"></section>
+    <section id="group" class="grid" hidden></section>
+  </main>
+
+  <script src="analysis.js"></script>
+</body>
+</html>

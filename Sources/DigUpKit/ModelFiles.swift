@@ -17,10 +17,16 @@ public enum ModelFiles {
         public let name: String
         public let bytes: Int64
         public let sha256: String
+        /// "repository@revision" when the file isn't EmbeddingGemma's (the namer's, `NamerFiles`).
+        var source: String? = nil
 
         /// Hugging Face's address for this file at the pinned revision (it redirects to a CDN that takes HTTP ranges).
         public var url: URL {
-            URL(string: "https://huggingface.co/\(ModelFiles.repository)/resolve/\(ModelFiles.revision)/\(name)")!
+            let (repository, revision) = source.map { source -> (String, String) in
+                let parts = source.split(separator: "@", maxSplits: 1).map(String.init)
+                return (parts[0], parts[1])
+            } ?? (ModelFiles.repository, ModelFiles.revision)
+            return URL(string: "https://huggingface.co/\(repository)/resolve/\(revision)/\(name)")!
         }
     }
 
@@ -73,5 +79,33 @@ public enum ModelFiles {
             if done { break }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+/// The model that names the analysis's groups of pictures (своя версия): Gemma 3 4B with its image encoder, ggml-org's
+/// GGUF at a pinned revision. Q4_K_M keeps it at 2.5 GB, so it fits a 6 GB GPU beside nothing else (the analysis
+/// doesn't load EmbeddingGemma). Downloaded by `digup analyze` the first time it names groups.
+public enum NamerFiles {
+    static let source = "ggml-org/gemma-3-4b-it-GGUF@d0976223747697cb51e056d85c532013931fe52e"
+    public static let text = ModelFiles.File(name: "gemma-3-4b-it-Q4_K_M.gguf", bytes: 2_489_757_856,
+                                             sha256: "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863",
+                                             source: source)
+    public static let media = ModelFiles.File(name: "mmproj-model-f16.gguf", bytes: 851_251_104,
+                                              sha256: "8c0fb064b019a6972856aaae2c7e4792858af3ca4561be2dbf649123ba6c40cb",
+                                              source: source)
+    public static let all = [text, media]
+    public static let totalBytes = all.reduce(0) { $0 + $1.bytes }
+
+    /// Beside EmbeddingGemma's files: `$DIGUP_MODELS/Namer` when the app chose the models' folder, else
+    /// DigUp's own Models/Namer.
+    public static var folder: URL {
+        if let chosen = ProcessInfo.processInfo.environment["DIGUP_MODELS"], !chosen.isEmpty {
+            return URL(fileURLWithPath: chosen).appendingPathComponent("Namer")
+        }
+        return ModelFiles.installed.appendingPathComponent("Namer")
+    }
+
+    public static func missing(in folder: URL) -> [ModelFiles.File] {
+        all.filter { !FileManager.default.fileExists(atPath: folder.appendingPathComponent($0.name).path) }
     }
 }

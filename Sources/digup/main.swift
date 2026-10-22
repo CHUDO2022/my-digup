@@ -30,6 +30,9 @@ let usage = """
       digup search-service <folder>... [--code-root DIR]... [--encoder-idle S]
                                               the searcher as a process, index open and encoder warm (JSON lines;
                                               see SearchService): for shells that can't link DigUpKit
+      digup analyze [<folder>...] [--out FILE] [--no-names]
+                                              groups of alike pictures and videos, named by Gemma 3 (своя
+                                              версия; JSON lines, see Analyze.swift)
       digup download-model [--to DIR]         the model files, from the Hugging Face cache or downloaded with
                                               resume, checked (JSON lines: see DownloadModel)
 
@@ -65,7 +68,7 @@ struct Arguments {
     var flags: Set<String> = []
     static let valued: Set<String> = ["--index", "--limit", "--kind", "-n", "--zgate", "--word-weight", "--new-limit",
                                       "--linger", "--shot-tokens", "--code-stretch", "--encoder-idle", "--to",
-                                      "--memory-limit", "--time-limit", "--tries", "--when-quiet"]
+                                      "--memory-limit", "--time-limit", "--tries", "--when-quiet", "--out"]
     static let repeated: Set<String> = ["--exclude", "--exclude-ext", "--code-root", "--code-exclude"]
 
     init(_ raw: ArraySlice<String>) throws {
@@ -696,7 +699,7 @@ do {
         exit(0)
     }
     let args = try Arguments(raw.dropFirst())
-    if ["index-service", "worker", "search-service", "download-model"].contains(command)
+    if ["index-service", "worker", "search-service", "download-model", "analyze"].contains(command)
         || command == "estimate" && args.flags.contains("--json") {
         ParentWatch.start()   // an app's helper goes when the app does
     }
@@ -730,6 +733,7 @@ do {
     case "worker": exit(workerService(args))
     case "search-service": exit(try searchService(args))
     case "download-model": exit(try downloadModel(args))
+    case "analyze": exit(try analyze(args))
     default:
         print(usage)
         exit(2)
