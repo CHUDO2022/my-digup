@@ -1,5 +1,6 @@
 // The photo analysis window (своя версия): pick a folder, run `digup analyze`, and see what the pictures and videos
-// are about — groups of alike files a model named, with what they take up — then open a group to see its files.
+// are about — groups of alike files a model named — and what may be junk (copies, series, blurry, dark, short videos,
+// screenshots, heavy videos). Files can be picked and moved into quarantine or another folder, and brought back.
 "use strict";
 
 const tauri = window.__TAURI__;
@@ -8,17 +9,35 @@ const ask = (request) => invoke("ask", { request });
 const fileURL = (path) => tauri.core.convertFileSrc(path);
 const $ = (id) => document.getElementById(id);
 
-// Pictures the web view shows as they are; anything else (HEIC, video…) comes as a JPEG the helper renders.
 const SHOWN_AS_IS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp"]);
 const STAGES = {
   reading: "Читаю, что программа уже знает о файлах…",
   grouping: "Собираю похожие файлы в группы…",
+  duplicates: "Ищу одинаковые файлы…",
+  quality: "Оцениваю резкость и яркость фото…",
   downloading: "Скачиваю модель, которая придумывает названия (3,3 ГБ, один раз)…",
   loading: "Загружаю модель…",
   naming: "Модель смотрит на группы и придумывает названия…",
 };
+/// The junk lists, in the order shown: what each is, and whether its files come in sets with one to keep.
+const JUNK = [
+  { key: "duplicates", title: "Точные копии", sets: true,
+    about: "Одинаковые файлы в нескольких местах. Отмечены лишние копии, самая старая остаётся." },
+  { key: "series", title: "Серии похожих снимков", sets: true,
+    about: "Почти одинаковые кадры одной сцены. Отмечены все, кроме самого резкого." },
+  { key: "blurry", title: "Размытые фото",
+    about: "Смазанные или не в фокусе. Проверьте глазами: размытость бывает задумкой." },
+  { key: "dark", title: "Тёмные фото", about: "Почти чёрные кадры: снято в кармане, с закрытой камерой." },
+  { key: "washed", title: "Пересвеченные фото", about: "Почти белые кадры." },
+  { key: "shortVideos", title: "Короткие видео", about: "Видео короче 3 секунд — чаще всего случайные." },
+  { key: "screenshots", title: "Скриншоты", about: "Все скриншоты, старые первыми." },
+  { key: "heavy", title: "Самые тяжёлые видео", about: "Видео больше 100 МБ, от самых больших." },
+];
 
-const state = { info: null, result: null, group: null, running: false };
+const state = {
+  info: null, result: null, tab: "groups", view: null, running: false,
+  selected: new Set(), journal: [], files: new Map(),
+};
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -44,12 +63,16 @@ function size(bytes) {
 }
 
 const nameOf = (path) => path.split(/[\\/]/).filter(Boolean).pop() || path;
+const folderOf = (path) => path.slice(0, Math.max(0, path.search(/[\\/][^\\/]*$/)));
+const sizeOf = (path) => state.files.get(path)?.size || 0;
+const kindOf = (path) => state.files.get(path)?.kind || "image";
+const bytesOf = (paths) => paths.reduce((sum, path) => sum + sizeOf(path), 0);
 
 // MARK: Thumbnails
 
-const renders = new Map();
 /// A small JPEG from the helper (a photo straight from the camera is megabytes: a grid of them would crawl); the file
 /// itself when the helper can't, and it's a picture the web view shows.
+const renders = new Map();
 function picture(path, kind) {
   const extension = (path.split(".").pop() || "").toLowerCase();
   const key = `${path}|${kind}`;
@@ -72,7 +95,6 @@ const thumbnails = new IntersectionObserver((entries) => {
     picture(tile.dataset.path, tile.dataset.kind).then((url) => {
       if (!url) return;
       const image = element("img");
-      image.loading = "lazy";
       image.decoding = "async";
       image.src = url;
       tile.prepend(image);
@@ -80,53 +102,165 @@ const thumbnails = new IntersectionObserver((entries) => {
   }
 }, { rootMargin: "300px" });
 
-function tile(path, kind) {
-  const node = element("div", "tile");
+function tile(path, options = {}) {
+  const kind = kindOf(path);
+  const node = element("div", "tile" + (options.className ? ` ${options.className}` : ""));
   node.dataset.path = path;
   node.dataset.kind = kind;
   if (kind === "video") node.append(element("span", "badge", "видео"));
+  if (options.keep) node.append(element("span", "keep", "оставить"));
+  if (options.selectable) {
+    node.append(element("span", "check"));
+    node.classList.toggle("selected", state.selected.has(path));
+    node.onclick = () => toggle(path, node);
+    node.ondblclick = (event) => { event.stopPropagation(); open(path); };
+  } else {
+    node.ondblclick = () => open(path);
+  }
+  node.oncontextmenu = (event) => { event.preventDefault(); invoke("reveal", { path }).catch(() => {}); };
+  node.title = `${nameOf(path)} · ${size(sizeOf(path))}\nДвойной щелчок — открыть, правый — показать в папке`;
   thumbnails.observe(node);
   return node;
+}
+
+const open = (path) => invoke("open_path", { path, page: null, seconds: null }).catch(() => {});
+
+// MARK: Selection
+
+function toggle(path, node) {
+  if (state.selected.has(path)) state.selected.delete(path);
+  else state.selected.add(path);
+  node.classList.toggle("selected", state.selected.has(path));
+  renderActions();
+}
+
+/// The files the open view can act on.
+function viewPaths() {
+  const view = state.view;
+  if (!view) return [];
+  if (view.type === "group") return state.result.groups[view.index].members.map((member) => member.path);
+  const list = state.result.junk?.[view.key] || [];
+  const junk = JUNK.find((item) => item.key === view.key);
+  return junk?.sets ? list.flatMap((set) => [set.keep, ...set.extra]) : list;
+}
+
+function renderActions() {
+  const shown = state.view != null;
+  $("actions").hidden = !shown;
+  if (!shown) return;
+  const count = state.selected.size;
+  $("selected-text").textContent = count
+    ? `Выбрано: ${files(count)} · ${size(bytesOf([...state.selected]))}`
+    : "Щёлкните по файлам, чтобы выбрать";
+  $("move").disabled = $("quarantine").disabled = count === 0;
+}
+
+$("select-all").onclick = () => { for (const path of viewPaths()) state.selected.add(path); render(); };
+$("select-none").onclick = () => { state.selected.clear(); render(); };
+
+$("quarantine").onclick = () => take(null);
+$("move").onclick = async () => {
+  const folder = await invoke("analysis_folder");
+  if (folder) take(folder);
+};
+
+async function take(folder) {
+  const paths = [...state.selected];
+  if (!paths.length) return;
+  $("quarantine").disabled = $("move").disabled = true;
+  const reply = await invoke("files_take", { paths, folder }).catch((error) => ({ moved: [], failed: [{ error: String(error) }] }));
+  forget(reply.moved || []);
+  const where = folder ? `в «${nameOf(folder)}»` : "в карантин";
+  let text = `${files((reply.moved || []).length)} ${where}`;
+  if (reply.failed?.length) text += ` · не получилось: ${reply.failed.length} (${reply.failed[0].error})`;
+  toast(text, "Открыть карантин", () => { state.view = null; state.tab = "quarantine"; render(); });
+  render();
+}
+
+/// Moved files leave the groups and the junk lists (the next analysis would drop them too).
+function forget(paths) {
+  const gone = new Set(paths);
+  for (const path of paths) state.selected.delete(path);
+  const result = state.result;
+  if (!result) return;
+  for (const group of result.groups) {
+    const before = group.members.length;
+    group.members = group.members.filter((member) => !gone.has(member.path));
+    if (group.members.length !== before) {
+      group.count = group.members.length;
+      group.bytes = group.members.reduce((sum, member) => sum + member.size, 0);
+      group.samples = (group.samples || []).filter((path) => !gone.has(path));
+    }
+  }
+  for (const junk of JUNK) {
+    const list = result.junk?.[junk.key];
+    if (!list) continue;
+    result.junk[junk.key] = junk.sets
+      ? list.map((set) => ({ keep: set.keep, extra: set.extra.filter((path) => !gone.has(path)) }))
+          .filter((set) => set.extra.length && !gone.has(set.keep))
+      : list.filter((path) => !gone.has(path));
+  }
+}
+
+let toastTimer = null;
+function toast(text, actionText, action) {
+  const node = $("toast");
+  node.replaceChildren(text);
+  if (actionText) {
+    const button = element("button", null, actionText);
+    button.onclick = () => { node.hidden = true; action(); };
+    node.append(button);
+  }
+  node.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { node.hidden = true; }, 7000);
 }
 
 // MARK: Pages
 
 function render() {
-  const result = state.result;
-  const inGroup = state.group != null;
-  $("back").hidden = !inGroup;
-  $("overview").hidden = inGroup;
-  $("groups").hidden = inGroup;
-  $("group").hidden = !inGroup;
-  $("title").textContent = inGroup ? result.groups[state.group].name || "Группа" : "Анализ фото";
-  if (inGroup) return renderGroup(result.groups[state.group]);
-  renderOverview();
+  const main = $("main");
+  main.replaceChildren();
+  const view = state.view;
+  $("back").hidden = !view;
+  $("tabs").hidden = Boolean(view);
+  $("rename").hidden = !(view && view.type === "group");
+  for (const button of $("tabs").querySelectorAll("button")) button.classList.toggle("selected", button.dataset.tab === state.tab);
+  $("title").textContent = !view ? "Анализ фото"
+    : view.type === "group" ? state.result.groups[view.index].name || "Группа"
+    : JUNK.find((item) => item.key === view.key).title;
+  renderActions();
+  if (state.tab === "quarantine" && !view) return renderQuarantine(main);
+  if (!state.result || !state.result.groups) return renderEmpty(main);
+  if (view?.type === "group") return renderGroup(main, state.result.groups[view.index]);
+  if (view?.type === "junk") return renderJunkList(main, view.key);
+  if (state.tab === "junk") return renderJunk(main);
+  renderOverview(main);
 }
 
-function renderOverview() {
-  const overview = $("overview"), groups = $("groups");
-  overview.replaceChildren();
-  groups.replaceChildren();
-  const result = state.result;
-  if (!result || !result.groups) {
-    const empty = element("div", "empty");
-    empty.append(element("h2", null, "Здесь будет анализ ваших фото и видео"));
-    empty.append(element("p", null,
-      "Выберите папку и нажмите «Анализировать». Программа соберёт похожие фото и видео в группы, а модель сама " +
-      "придумает им названия. Результат сохранится — заново ничего гонять не придётся."));
-    if (state.info && state.info.folders.length === 0) {
-      empty.append(element("p", "error",
-        "Сначала добавьте папки в DigUp (меню в трее → Choose Folders…) и дождитесь, пока она их прочитает."));
-    }
-    overview.append(empty);
-    return;
+function renderEmpty(main) {
+  const empty = element("div", "empty");
+  empty.append(element("h2", null, "Здесь будет анализ ваших фото и видео"));
+  empty.append(element("p", null,
+    "Выберите папку и нажмите «Анализировать». Программа соберёт похожие фото и видео в группы, модель сама " +
+    "придумает им названия, а во вкладке «Мусор» появятся копии, серии, размытые и тёмные фото, случайные видео. " +
+    "Результат сохранится — заново ничего гонять не придётся."));
+  if (state.info && state.info.folders.length === 0) {
+    empty.append(element("p", "error",
+      "Сначала добавьте папки (меню в трее → «Выбрать папки…») и дождитесь, пока программа их просмотрит."));
   }
+  main.append(empty);
+}
+
+function stat(big, small) {
+  const node = element("div", "stat");
+  node.append(element("b", null, big), element("span", null, small));
+  return node;
+}
+
+function renderOverview(main) {
+  const result = state.result;
   const stats = element("div", "stats");
-  const stat = (big, small) => {
-    const node = element("div", "stat");
-    node.append(element("b", null, big), element("span", null, small));
-    return node;
-  };
   const kinds = result.kinds || {};
   stats.append(
     stat(files(result.files), size(result.bytes)),
@@ -135,11 +269,11 @@ function renderOverview() {
     stat((kinds.screenshot || 0).toLocaleString("ru-RU"), "из них скриншотов"),
     stat((kinds.video || 0).toLocaleString("ru-RU"), "видео"),
   );
-  overview.append(stats);
+  main.append(stats);
 
   const years = Object.entries(result.years || {}).sort(([a], [b]) => a - b);
   if (years.length > 1) {
-    overview.append(element("h3", null, "По годам"));
+    main.append(element("h3", null, "По годам"));
     const chart = element("div", "years");
     const most = Math.max(...years.map(([, n]) => n));
     for (const [year, n] of years) {
@@ -150,55 +284,218 @@ function renderOverview() {
       column.append(bar, element("small", null, year));
       chart.append(column);
     }
-    overview.append(chart);
+    main.append(chart);
   }
-  overview.append(element("h3", null, "Что на фото и видео"));
-
+  main.append(element("h3", null, "Что на фото и видео"));
+  const groups = element("section", "groups");
   result.groups.forEach((group, index) => {
+    if (!group.members.length) return;
     const card = element("div", "card");
     const thumbs = element("div", "thumbs");
-    const kindOf = new Map((group.members || []).map((member) => [member.path, member.kind]));
-    for (const path of (group.samples || []).slice(0, 6)) thumbs.append(tile(path, kindOf.get(path) || "image"));
+    for (const path of (group.samples || []).slice(0, 6)) thumbs.append(tile(path));
     const about = element("div", "about");
     about.append(element("div", "name", group.name || "Модель ещё думает…"));
     about.append(element("div", "meta", `${files(group.count)} · ${size(group.bytes)}`));
     card.append(thumbs, about);
-    card.onclick = () => { state.group = index; render(); $("main").scrollTop = 0; };
+    card.onclick = () => openView({ type: "group", index });
     groups.append(card);
   });
+  main.append(groups);
 }
 
-function renderGroup(group) {
-  const grid = $("group");
-  grid.replaceChildren();
-  const hint = element("p", "hint",
-    `${files(group.count)} · ${size(group.bytes)}. Двойной щелчок — открыть, правый — показать в папке.`);
-  hint.style.gridColumn = "1 / -1";
-  grid.append(hint);
-  for (const member of group.members || []) {
-    const node = tile(member.path, member.kind);
-    node.title = `${nameOf(member.path)} · ${size(member.size)}`;
-    node.ondblclick = () => invoke("open_path", { path: member.path, page: null, seconds: null }).catch(() => {});
-    node.oncontextmenu = (event) => {
-      event.preventDefault();
-      invoke("reveal", { path: member.path }).catch(() => {});
-    };
-    grid.append(node);
+function renderGroup(main, group) {
+  const grid = element("section", "grid");
+  for (const member of group.members) grid.append(tile(member.path, { selectable: true }));
+  main.append(grid);
+}
+
+function junkPaths(key) {
+  const list = state.result.junk?.[key] || [];
+  return JUNK.find((item) => item.key === key)?.sets ? list.flatMap((set) => set.extra) : list;
+}
+
+function renderJunk(main) {
+  const junk = state.result.junk;
+  if (!junk || !Object.keys(junk).length) {
+    main.append(element("div", "empty", "Мусор ещё ищется — подождите, пока закончится анализ."));
+    return;
+  }
+  const extra = new Set(["duplicates", "series", "blurry", "dark", "washed", "shortVideos"].flatMap(junkPaths));
+  const free = element("p", "free");
+  free.append("Если убрать копии, лишние кадры серий, размытые, тёмные, пересвеченные фото и короткие видео, освободится ",
+              element("b", null, size(bytesOf([...extra]))), ` (${files(extra.size)}).`);
+  main.append(free);
+  const cards = element("section", "junk");
+  for (const item of JUNK) {
+    const paths = junkPaths(item.key);
+    const card = element("div", "card" + (paths.length ? "" : " empty-card"));
+    card.append(element("div", "name", item.title), element("p", null, item.about));
+    const line = element("div");
+    line.append(element("b", null, paths.length ? files(paths.length) : "нет"),
+                paths.length ? ` · ${size(bytesOf(paths))}` : "");
+    card.append(line);
+    if (paths.length) card.onclick = () => openView({ type: "junk", key: item.key });
+    cards.append(card);
+  }
+  main.append(cards);
+  if (junk.measured === 0) {
+    main.append(element("p", "hint", "Резкость и яркость не оценены: эти фото программа прочитать не смогла."));
   }
 }
 
+function renderJunkList(main, key) {
+  const item = JUNK.find((entry) => entry.key === key);
+  const list = state.result.junk?.[key] || [];
+  main.append(element("p", "hint", item.about + " Щелчок — выбрать, двойной — открыть, правый — показать в папке."));
+  const grid = element("section", "grid");
+  if (item.sets) {
+    list.forEach((set, index) => {
+      grid.append(element("div", "set", `${index + 1}. ${files(set.extra.length + 1)}`));
+      grid.append(tile(set.keep, { selectable: true, keep: true }));
+      for (const path of set.extra) grid.append(tile(path, { selectable: true }));
+    });
+  } else {
+    for (const path of list) grid.append(tile(path, { selectable: true }));
+  }
+  main.append(grid);
+}
+
+async function renderQuarantine(main) {
+  state.journal = await invoke("files_journal").catch(() => []);
+  main.replaceChildren();
+  const entries = [...state.journal].sort((a, b) => b.at - a.at);
+  if (!entries.length) {
+    main.append(element("div", "empty", "Здесь пока пусто. Файлы, убранные в карантин или перемещённые в другую " +
+      "папку, появятся здесь — их можно вернуть на место."));
+    return;
+  }
+  const quarantined = entries.filter((entry) => entry.kind === "quarantine");
+  const free = element("p", "free");
+  free.append("В карантине ", element("b", null, files(quarantined.length)), ` · ${size(quarantined.reduce((s, e) => s + e.size, 0))}. ` +
+              "Пока файлы здесь, место не освобождено — удалите навсегда, когда будете уверены.");
+  main.append(free);
+  const chosen = new Set();
+  const buttons = element("div", "bar-buttons");
+  const restore = element("button", null, "Вернуть на место");
+  const purge = element("button", "danger", "Удалить навсегда");
+  const all = element("button", null, "Выбрать всё");
+  const update = () => {
+    restore.disabled = purge.disabled = chosen.size === 0;
+    restore.textContent = chosen.size ? `Вернуть на место (${chosen.size})` : "Вернуть на место";
+  };
+  buttons.append(all, restore, purge);
+  main.append(buttons);
+  const rows = element("div", "rows");
+  for (const entry of entries) {
+    const row = element("label", "row");
+    const box = element("input");
+    box.type = "checkbox";
+    box.onchange = () => { box.checked ? chosen.add(entry.id) : chosen.delete(entry.id); update(); };
+    const thumb = element("div", "tile thumb");
+    thumb.dataset.path = entry.stored;
+    thumb.dataset.kind = /\.(mp4|mov|m4v|mkv|webm|avi|wmv|3gp|mpg|mpeg)$/i.test(entry.stored) ? "video" : "image";
+    thumbnails.observe(thumb);
+    const what = element("div", "what");
+    what.append(element("div", null, nameOf(entry.original)),
+                element("div", "from", (entry.kind === "quarantine" ? "в карантине · было в " : "перемещён в " +
+                  folderOf(entry.stored) + " · был в ") + folderOf(entry.original) + " · " +
+                  new Date(entry.at * 1000).toLocaleString("ru-RU")));
+    row.append(box, thumb, what, element("span", "size", size(entry.size)));
+    row.ondblclick = () => invoke("open_path", { path: entry.stored, page: null, seconds: null }).catch(() => {});
+    rows.append(row);
+  }
+  main.append(rows);
+  all.onclick = () => {
+    for (const entry of entries) chosen.add(entry.id);
+    for (const box of rows.querySelectorAll("input")) box.checked = true;
+    update();
+  };
+  restore.onclick = async () => {
+    const reply = await invoke("files_restore", { ids: [...chosen] }).catch((error) => ({ restored: [], failed: [{ error: String(error) }] }));
+    toast(`Возвращено: ${files(reply.restored.length)}` + (reply.failed.length ? ` · не получилось: ${reply.failed.length}` : "") +
+          ". Запустите анализ ещё раз, чтобы они снова попали в группы.");
+    render();
+  };
+  purge.onclick = async () => {
+    const picked = entries.filter((entry) => chosen.has(entry.id) && entry.kind === "quarantine");
+    if (!picked.length) { toast("Удалить навсегда можно только файлы из карантина."); return; }
+    const sure = window.confirm(`Удалить навсегда ${files(picked.length)} (${size(picked.reduce((s, e) => s + e.size, 0))})? ` +
+                                "Вернуть их будет нельзя.");
+    if (!sure) return;
+    const reply = await invoke("files_purge", { ids: picked.map((entry) => entry.id) }).catch(() => ({ bytes: 0, failed: [] }));
+    toast(`Удалено навсегда, освобождено ${size(reply.bytes)}` + (reply.failed.length ? ` · не получилось: ${reply.failed.length}` : ""));
+    render();
+  };
+  update();
+}
+
+function openView(view) {
+  state.view = view;
+  state.selected.clear();
+  if (view.type === "junk") {
+    // Sets come with their extras picked: what's suggested to go.
+    const item = JUNK.find((entry) => entry.key === view.key);
+    if (item.sets) for (const path of junkPaths(view.key)) state.selected.add(path);
+  }
+  render();
+  $("main").scrollTop = 0;
+}
+
+function closeView() {
+  state.view = null;
+  state.selected.clear();
+  render();
+}
+
+$("back").onclick = closeView;
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.view && document.activeElement?.tagName !== "INPUT") closeView();
+});
+for (const button of $("tabs").querySelectorAll("button")) {
+  button.onclick = () => { state.tab = button.dataset.tab; state.view = null; render(); };
+}
+
+$("rename").onclick = () => {
+  const view = state.view;
+  if (!view || view.type !== "group") return;
+  const group = state.result.groups[view.index];
+  const input = element("input", "title-edit");
+  input.value = group.name || "";
+  $("title").replaceChildren(input);
+  input.focus();
+  input.select();
+  const done = async (save) => {
+    if (save && input.value.trim()) {
+      group.name = input.value.trim();
+      await invoke("analysis_rename", { id: group.id, name: group.name }).catch(() => {});
+    }
+    render();
+  };
+  input.onkeydown = (event) => {
+    if (event.key === "Enter") done(true);
+    if (event.key === "Escape") { event.stopPropagation(); done(false); }
+  };
+  input.onblur = () => done(true);
+};
+
 // MARK: Running
 
-function showProgress(event) {
+function showProgress() {
   const progress = $("progress"), text = $("progress-text"), bar = $("progress-bar");
-  if (!state.running) { progress.hidden = true; return; }
+  if (!state.running) { progress.hidden = true; $("run").disabled = false; return; }
   progress.hidden = false;
+  $("ring").hidden = false;
+  text.className = "";
   const stage = state.stage || "reading";
   let line = STAGES[stage] || "Анализирую…";
   let fraction = null;
   if (stage === "downloading" && state.download) {
     fraction = state.download.bytes / state.download.total;
     line += ` ${size(state.download.bytes)} из ${size(state.download.total)}`;
+  }
+  if (stage === "quality" && state.measured) {
+    fraction = state.measured.done / state.measured.total;
+    line += ` ${state.measured.done.toLocaleString("ru-RU")} из ${state.measured.total.toLocaleString("ru-RU")}`;
   }
   if (stage === "naming" && state.named) {
     fraction = state.named.done / state.named.total;
@@ -210,10 +507,18 @@ function showProgress(event) {
   $("run").disabled = true;
 }
 
+function indexFiles() {
+  state.files = new Map();
+  for (const group of state.result?.groups || []) {
+    for (const member of group.members || []) state.files.set(member.path, member);
+  }
+}
+
 async function reload() {
   state.info = await invoke("analysis_info");
   state.result = state.info.result;
-  if (state.group != null && (!state.result || !state.result.groups[state.group])) state.group = null;
+  indexFiles();
+  if (state.view?.type === "group" && !state.result?.groups?.[state.view.index]) state.view = null;
   render();
 }
 
@@ -222,35 +527,36 @@ function onEvent(event) {
     case "stage":
       state.running = true;
       state.stage = event.stage;
-      if (event.stage === "naming") reload();
+      if (["duplicates", "naming"].includes(event.stage) && !state.view) reload();
       break;
     case "progress":
       state.download = { bytes: event.all_bytes, total: event.all_total };
       break;
+    case "measured":
+      state.measured = { done: event.done, total: event.total };
+      break;
     case "named":
       state.named = { done: event.done, total: event.total };
-      if (state.result && state.result.groups[event.group]) {
+      if (state.result && state.result.groups[event.group] && !state.result.groups[event.group].custom) {
         state.result.groups[event.group].name = event.name;
-        if (state.group == null) renderOverview();
+        if (!state.view && state.tab === "groups") render();
       }
       break;
     case "done":
       state.running = false;
-      $("run").disabled = false;
-      reload();
+      if (!state.view) reload();
       break;
     case "error":
-    case "stopped": {
+    case "stopped":
       state.running = false;
       $("run").disabled = false;
-      const progress = $("progress");
-      progress.hidden = false;
+      $("progress").hidden = false;
+      $("ring").hidden = true;
+      $("progress-bar").parentElement.hidden = true;
       $("progress-text").textContent = `Не получилось: ${event.message || "анализ прервался"}`;
       $("progress-text").className = "error";
       return;
-    }
   }
-  $("progress-text").className = "";
   showProgress();
 }
 
@@ -258,7 +564,7 @@ function fillFolders() {
   const select = $("folder");
   const chosen = select.value;
   select.replaceChildren();
-  const all = element("option", null, "Все папки DigUp");
+  const all = element("option", null, "Все папки");
   all.value = "";
   select.append(all);
   for (const folder of state.info.folders) {
@@ -266,7 +572,7 @@ function fillFolders() {
     option.value = folder;
     select.append(option);
   }
-  const other = element("option", null, "Другая папка внутри них…");
+  const other = element("option", null, "Папка внутри них…");
   other.value = "?";
   select.append(other);
   select.value = [...select.options].some((option) => option.value === chosen) ? chosen : "";
@@ -288,10 +594,7 @@ $("folder").onchange = async () => {
 
 $("run").onclick = async () => {
   const folder = $("folder").value;
-  state.running = true;
-  state.stage = "reading";
-  state.download = null;
-  state.named = null;
+  Object.assign(state, { running: true, stage: "reading", download: null, named: null, measured: null });
   showProgress();
   try {
     await invoke("analysis_run", { folders: folder && folder !== "?" ? [folder] : [] });
@@ -300,11 +603,6 @@ $("run").onclick = async () => {
   }
 };
 
-$("back").onclick = () => { state.group = null; render(); };
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && state.group != null) { state.group = null; render(); }
-});
-
 tauri.event.listen("analysis", ({ payload }) => onEvent(payload));
 
 (async () => {
@@ -312,10 +610,10 @@ tauri.event.listen("analysis", ({ payload }) => onEvent(payload));
   fillFolders();
   const running = state.info.state;
   if (running && running.state === "running") {
-    state.running = true;
-    state.stage = running.stage;
-    state.download = running.download ? { bytes: running.download.bytes, total: running.download.total } : null;
-    state.named = running.named || null;
+    Object.assign(state, {
+      running: true, stage: running.stage, download: running.download || null, named: running.named || null,
+      measured: running.measured || null,
+    });
     showProgress();
   }
 })();

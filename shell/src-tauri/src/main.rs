@@ -8,6 +8,7 @@
 mod clipboard;
 mod code;
 mod editors;
+mod files;
 mod helper;
 mod hotkey;
 mod hours;
@@ -657,7 +658,8 @@ fn main() {
             remove_folder, set_skipped, set_skip_types, set_index_hours, code_setup_info, set_code_folders, choose_code_folders,
             remove_code_folder, turn_off_code, set_code_editor, window_resized, copy_file, drag_out, set_hotkey, hold_hotkey,
             set_tray_click, check_for_updates, offer_update, set_update_checks, open_licenses,
-            analysis_info, analysis_run, analysis_folder
+            analysis_info, analysis_run, analysis_folder, analysis_rename, files_take, files_journal, files_restore,
+            files_purge
         ])
         .build(tauri::generate_context!())
         .expect("DigUp couldn't start");
@@ -1262,6 +1264,50 @@ async fn analysis_folder(app: AppHandle) -> Option<String> {
     picked.into_path().ok().map(|path| path.display().to_string())
 }
 
+/// A group's name, chosen by the person: kept in analysis.json, and kept by later runs (they keep a group's name).
+#[tauri::command]
+fn analysis_rename(shell: State<'_, Arc<Shell>>, id: u64, name: String) -> Result<(), String> {
+    let file = analysis_file(&shell).ok_or("no index folder")?;
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&file).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let groups = saved["groups"].as_array_mut().ok_or("no groups")?;
+    let group = groups.iter_mut().find(|group| group["id"].as_u64() == Some(id)).ok_or("no such group")?;
+    group["name"] = json!(name.trim());
+    group["custom"] = json!(true);
+    std::fs::write(&file, serde_json::to_vec(&saved).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
+/// Quarantine and the journal of moves: beside the index (%LOCALAPPDATA%\DigUp\quarantine).
+fn files_of(shell: &Shell) -> Result<files::Files, String> {
+    let index = shell.options.index_folder().ok_or("no index folder")?;
+    let base = index.parent().map(Path::to_path_buf).unwrap_or(index);
+    Ok(files::Files::new(base.join("quarantine")))
+}
+
+/// Into quarantine (`folder` None), or into `folder`.
+#[tauri::command]
+async fn files_take(shell: State<'_, Arc<Shell>>, paths: Vec<String>, folder: Option<String>) -> Result<Value, String> {
+    let files = files_of(&shell)?;
+    let target = folder.map(PathBuf::from);
+    tauri::async_runtime::spawn_blocking(move || files.take(&paths, target.as_deref())).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn files_journal(shell: State<'_, Arc<Shell>>) -> Result<Value, String> {
+    Ok(json!(files_of(&shell)?.journal()))
+}
+
+#[tauri::command]
+async fn files_restore(shell: State<'_, Arc<Shell>>, ids: Vec<String>) -> Result<Value, String> {
+    let files = files_of(&shell)?;
+    tauri::async_runtime::spawn_blocking(move || files.restore(&ids)).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn files_purge(shell: State<'_, Arc<Shell>>, ids: Vec<String>) -> Result<Value, String> {
+    let files = files_of(&shell)?;
+    tauri::async_runtime::spawn_blocking(move || files.purge(&ids)).await.map_err(|e| e.to_string())
+}
+
 fn analysis_event(app: &AppHandle, event: Value) {
     let shell = app.state::<Arc<Shell>>().inner().clone();
     {
@@ -1273,6 +1319,9 @@ fn analysis_event(app: &AppHandle, event: Value) {
             }
             "named" => {
                 state["named"] = json!({"done": event["done"], "total": event["total"]});
+            }
+            "measured" => {
+                state["measured"] = json!({"done": event["done"], "total": event["total"]});
             }
             "done" => *state = json!({"state": "done"}),
             "error" => *state = json!({"state": "failed", "message": event["message"]}),

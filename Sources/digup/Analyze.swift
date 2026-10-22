@@ -34,6 +34,8 @@ private enum Analysis {
         let kind: String
         let size: Int64
         let year: Int?
+        let mtime: Double
+        let duration: Double?
         var vector: [Float]
     }
 
@@ -68,7 +70,10 @@ private enum Analysis {
                 previous.remove(at: match)
             }
         }
-        try write(result, members: members, folders: folders, to: out)
+        var junk: [String: Any] = [:]
+        try write(result, members: members, folders: folders, junk: junk, to: out)
+        junk = Junk.find(members, groups: groups, cache: args.indexFolder.appendingPathComponent("quality.json"))
+        try write(result, members: members, folders: folders, junk: junk, to: out)
         let unnamed = result.indices.filter { result[$0]["name"] == nil }
         if !unnamed.isEmpty && !args.flags.contains("--no-names") {
             let folder = NamerFiles.folder
@@ -88,10 +93,10 @@ private enum Analysis {
                 }
                 result[index]["name"] = name
                 emit(["event": "named", "group": index, "name": name, "done": done + 1, "total": unnamed.count])
-                if (done + 1) % 5 == 0 { try write(result, members: members, folders: folders, to: out) }
+                if (done + 1) % 5 == 0 { try write(result, members: members, folders: folders, junk: junk, to: out) }
             }
         }
-        try write(result, members: members, folders: folders, to: out)
+        try write(result, members: members, folders: folders, junk: junk, to: out)
         return result.count
     }
 
@@ -107,7 +112,8 @@ private enum Analysis {
             let path = row.text(1) ?? ""
             guard folders.isEmpty || folders.contains(where: { under(normalized(path), $0) }) else { return }
             byFile[row.int(0)] = Member(path: path, kind: row.text(2) ?? "image", size: row.int(3),
-                                        year: year(info: row.text(5), mtime: row.double(4)),
+                                        year: year(info: row.text(5), mtime: row.double(4)), mtime: row.double(4),
+                                        duration: duration(info: row.text(5)),
                                         vector: [Float](repeating: 0, count: 768))
         }
         var counts: [Int64: Int] = [:]
@@ -128,6 +134,12 @@ private enum Analysis {
             normalize(&member.vector)
             return member
         }.sorted { $0.path < $1.path }
+    }
+
+    static func duration(info: String?) -> Double? {
+        guard let info, let data = info.data(using: .utf8),
+              let fields = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (fields["duration"] as? String).flatMap(Double.init) ?? (fields["duration"] as? NSNumber)?.doubleValue
     }
 
     /// The year it was taken: the camera's date ("2023:07:14 18:02:11"), else when the file was last changed.
@@ -298,7 +310,8 @@ private enum Analysis {
 
     // MARK: Output
 
-    static func write(_ groups: [[String: Any]], members: [Member], folders: [String], to file: URL) throws {
+    static func write(_ groups: [[String: Any]], members: [Member], folders: [String], junk: [String: Any],
+                      to file: URL) throws {
         var kinds: [String: Int] = [:], years: [String: Int] = [:], bytes: Int64 = 0
         for member in members {
             kinds[member.kind, default: 0] += 1
@@ -311,7 +324,7 @@ private enum Analysis {
             "version": 1,
             "created": ISO8601DateFormatter().string(from: Date()),
             "folders": folders,
-            "files": members.count, "bytes": bytes, "kinds": kinds, "years": years,
+            "files": members.count, "bytes": bytes, "kinds": kinds, "years": years, "junk": junk,
             "groups": groups.map { group -> [String: Any] in
                 var group = group
                 group["members"] = (group["members"] as? [String] ?? []).map { path -> [String: Any] in
@@ -357,5 +370,161 @@ struct SeededRandom {
         z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE5_E9B9
         z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
         return z ^ (z >> 31)
+    }
+}
+
+// MARK: Junk
+
+extension Analysis {
+    /// What may be worth removing (своя версия, "Мусор"): exact copies, series of nearly the same shot, blurry, dark or
+    /// washed-out pictures, short accidental videos, screenshots and the heaviest videos. Nothing is removed here: the
+    /// window shows the lists and the person decides. Each list of extras names the copy worth keeping.
+    enum Junk {
+        static let blurry = 40.0          // Laplacian variance on the ~320-pixel grid
+        static let darkMean = 28.0
+        static let washedOut = 0.85       // share of nearly white pixels
+        static let shortVideo = 3.0       // seconds
+        static let seriesCosine: Float = 0.96
+
+        static func find(_ members: [Member], groups: [[Int]], cache: URL) -> [String: Any] {
+            emit(["event": "stage", "stage": "duplicates"])
+            let duplicates = exactCopies(members)
+            let copies = Set(duplicates.flatMap { $0["extra"] as? [String] ?? [] })
+            emit(["event": "stage", "stage": "quality"])
+            let quality = measure(members, cache: cache)
+            let series = nearCopies(members, groups: groups, quality: quality, leaving: copies)
+            var blurry: [String] = [], dark: [String] = [], washed: [String] = []
+            for member in members where member.kind == "image" {
+                guard let q = quality[member.path] else { continue }
+                if q.brightness < darkMean || q.dark > 0.9 { dark.append(member.path) }
+                else if q.bright > washedOut { washed.append(member.path) }
+                else if q.sharpness < blurry { blurry.append(member.path) }
+            }
+            let shortVideos = members.filter { $0.kind == "video" && ($0.duration ?? 99) < shortVideo }.map(\.path)
+            let screenshots = members.filter { $0.kind == "screenshot" }.sorted { $0.mtime < $1.mtime }.map(\.path)
+            let heavy = members.filter { $0.kind == "video" && $0.size >= 100 << 20 }.sorted { $0.size > $1.size }
+                .prefix(100).map(\.path)
+            return ["duplicates": duplicates, "series": series, "blurry": blurry, "dark": dark, "washed": washed,
+                    "shortVideos": shortVideos, "screenshots": screenshots, "heavy": heavy,
+                    "measured": quality.count]
+        }
+
+        /// Files with the same bytes: same size first, then the same SHA-256. The oldest copy is the one to keep.
+        static func exactCopies(_ members: [Member]) -> [[String: Any]] {
+            var bySize: [Int64: [Member]] = [:]
+            for member in members where member.size > 0 { bySize[member.size, default: []].append(member) }
+            var found: [[String: Any]] = []
+            for (_, same) in bySize where same.count > 1 {
+                var byHash: [String: [Member]] = [:]
+                for member in same {
+                    guard let hash = try? ModelFiles.sha256(of: URL(fileURLWithPath: member.path)) else { continue }
+                    byHash[hash, default: []].append(member)
+                }
+                for (_, copies) in byHash where copies.count > 1 {
+                    let sorted = copies.sorted { ($0.mtime, $0.path.count) < ($1.mtime, $1.path.count) }
+                    found.append(["keep": sorted[0].path, "extra": sorted.dropFirst().map(\.path)])
+                }
+            }
+            return found.sorted { ($0["keep"] as? String ?? "") < ($1["keep"] as? String ?? "") }
+        }
+
+        /// Pictures of one group whose vectors nearly match (series of the same shot), joined into sets. The sharpest
+        /// (else the largest) is the one to keep.
+        static func nearCopies(_ members: [Member], groups: [[Int]], quality: [String: PictureInfo],
+                               leaving copies: Set<String>) -> [[String: Any]] {
+            var parent = Array(0..<members.count)
+            func root(_ i: Int) -> Int {
+                var i = i
+                while parent[i] != i {
+                    parent[i] = parent[parent[i]]
+                    i = parent[i]
+                }
+                return i
+            }
+            for group in groups {
+                let pictures = group.filter { members[$0].kind != "video" && !copies.contains(members[$0].path) }
+                for (a, i) in pictures.enumerated() {
+                    for j in pictures[(a + 1)...] where Analysis.dot(members[i].vector, members[j].vector) >= seriesCosine {
+                        let (ri, rj) = (root(i), root(j))
+                        if ri != rj { parent[ri] = rj }
+                    }
+                }
+            }
+            var sets: [Int: [Int]] = [:]
+            for i in members.indices { sets[root(i), default: []].append(i) }
+            var found: [[String: Any]] = []
+            for (_, set) in sets where set.count > 1 {
+                var best = set[0]
+                for candidate in set.dropFirst() {
+                    let qa = quality[members[best].path], qb = quality[members[candidate].path]
+                    let better: Bool
+                    if let qa, let qb, abs(qa.sharpness - qb.sharpness) > 5 {
+                        better = qb.sharpness > qa.sharpness
+                    } else {
+                        better = members[candidate].size > members[best].size
+                    }
+                    if better { best = candidate }
+                }
+                found.append(["keep": members[best].path,
+                              "extra": set.filter { $0 != best }.map { members[$0].path }.sorted()])
+            }
+            return found.sorted { ($0["keep"] as? String ?? "") < ($1["keep"] as? String ?? "") }
+        }
+
+        struct PictureInfo: Codable {
+            let size: Int64
+            let mtime: Double
+            let sharpness: Double
+            let brightness: Double
+            let dark: Double
+            let bright: Double
+        }
+
+        /// Sharpness and brightness of every photo (not screenshots, not videos), kept in `cache` by path, size and
+        /// time, so a later run reads only new pictures. Several at once: decoding is most of the time.
+        static func measure(_ members: [Member], cache: URL) -> [String: PictureInfo] {
+            var known = (try? JSONDecoder().decode([String: PictureInfo].self, from: Data(contentsOf: cache))) ?? [:]
+            let photos = members.filter { $0.kind == "image" }
+            let missing = photos.filter { member in
+                guard let entry = known[member.path] else { return true }
+                return entry.size != member.size || entry.mtime != member.mtime
+            }
+            #if !canImport(ImageIO)
+            let results = Results()
+            let workers = max(1, min(8, ProcessInfo.processInfo.activeProcessorCount - 1))
+            DispatchQueue.concurrentPerform(iterations: workers) { worker in
+                var index = worker
+                while index < missing.count {
+                    let member = missing[index]
+                    let measured = PictureQuality.measure(member.path).map {
+                        PictureInfo(size: member.size, mtime: member.mtime, sharpness: $0.sharpness,
+                                    brightness: $0.brightness, dark: $0.dark, bright: $0.bright)
+                    }
+                    results.add(member.path, measured, of: missing.count)
+                    index += workers
+                }
+            }
+            for (path, info) in results.measured { known[path] = info }
+            #endif
+            let present = Set(photos.map(\.path))
+            known = known.filter { present.contains($0.key) }
+            if !missing.isEmpty, let data = try? JSONEncoder().encode(known) { try? data.write(to: cache) }
+            return known
+        }
+
+        /// What the workers measured, under a lock.
+        final class Results: @unchecked Sendable {
+            private let lock = NSLock()
+            private(set) var measured: [String: PictureInfo] = [:]
+            private var done = 0
+
+            func add(_ path: String, _ info: PictureInfo?, of total: Int) {
+                lock.withLock {
+                    if let info { measured[path] = info }
+                    done += 1
+                    if done % 50 == 0 || done == total { emit(["event": "measured", "done": done, "total": total]) }
+                }
+            }
+        }
     }
 }
