@@ -3,10 +3,8 @@
 # fetched, so the reference-vector test skips itself; everything else runs. Also by hand: `gh workflow run ci.yml`.
 name: CI
 
+# Своя версия: тесты Mac/Linux только вручную (gh workflow run ci.yml), сборка под Windows — в packages.yml.
 on:
-  pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

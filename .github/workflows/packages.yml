@@ -9,6 +9,9 @@
 name: Packages
 
 on:
+  # Своя версия: установщик под Windows собирается на каждый push в main.
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       ref:
@@ -20,6 +23,7 @@ permissions:
 
 jobs:
   linux:
+    if: false   # своя версия: только Windows
     # Built in an Ubuntu 22.04 container: the binaries then ask for glibc 2.35 at most and start on Ubuntu 22.04, Debian 12,
     # Mint 21 and anything newer (built on 24.04 they'd need its 2.39). GitHub is retiring its ubuntu-22.04 runners.
     runs-on: ubuntu-24.04
