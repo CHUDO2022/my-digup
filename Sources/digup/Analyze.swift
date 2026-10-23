@@ -41,10 +41,16 @@ private enum Analysis {
 
     static let kinds = ["image", "screenshot", "video"]
     static let question = """
-        Это фотографии из одной группы в личном фотоархиве. Придумай короткое название для этой группы на русском \
+        Это фотографии и кадры из видео одной группы в личном архиве. Придумай короткое название для этой группы на русском \
         языке: 2–5 слов о том, что у них общего (например: «Скриншоты переписок», «Дети на площадке», «Фото \
         документов», «Закаты на море»). Ответь только названием, без кавычек и пояснений.
         """
+
+    static func sectionQuestion(_ names: [String]) -> String {
+        "Это примеры из нескольких похожих групп личного фотоархива: " + names.prefix(8).joined(separator: "; ")
+            + ". Придумай общее короткое название для раздела, который их объединяет, на русском языке: 1–3 слова "
+            + "(например: «Дети», «Путешествия», «Документы и чеки»). Ответь только названием, без кавычек."
+    }
 
     static func run(_ args: Arguments, out: URL) throws -> Int {
         emit(["event": "stage", "stage": "reading"])
@@ -70,12 +76,21 @@ private enum Analysis {
                 previous.remove(at: match)
             }
         }
-        var junk: [String: Any] = [:]
-        try write(result, members: members, folders: folders, junk: junk, to: out)
-        junk = Junk.find(members, groups: groups, cache: args.indexFolder.appendingPathComponent("quality.json"))
-        try write(result, members: members, folders: folders, junk: junk, to: out)
+        var extras: [String: Any] = [:]
+        try write(result, members: members, folders: folders, extras: extras, to: out)
+        extras["junk"] = Junk.find(members, groups: groups, cache: args.indexFolder.appendingPathComponent("quality.json"))
+        // Groups that look alike, merged step by step: the window cuts this anywhere (bigger or finer groups), and
+        // the cut into a handful of sections gets names too.
+        let merges = Sections.merges(groups, members: members, misc: misc)
+        extras["merges"] = merges.map { merge -> [String: Any] in
+            ["a": merge.a, "b": merge.b, "into": merge.into, "similarity": Double(merge.similarity)]
+        }
+        let sections = Sections.cut(merges, groups: groups.count - (misc ? 1 : 0))
+        var sectionNames: [Int: String] = [:]
+        try write(result, members: members, folders: folders, extras: extras, to: out)
         let unnamed = result.indices.filter { result[$0]["name"] == nil }
-        if !unnamed.isEmpty && !args.flags.contains("--no-names") {
+        let unnamedSections = sections.indices.filter { sections[$0].count > 1 }
+        if !args.flags.contains("--no-names") && (!unnamed.isEmpty || !unnamedSections.isEmpty) {
             let folder = NamerFiles.folder
             if !NamerFiles.missing(in: folder).isEmpty {
                 emit(["event": "stage", "stage": "downloading"])
@@ -84,19 +99,50 @@ private enum Analysis {
             emit(["event": "stage", "stage": "loading"])
             let namer = try LlamaNamer(folder: folder, log: args.indexFolder.appendingPathComponent("namer.log"))
             defer { namer.close() }
+            let frames = args.indexFolder.appendingPathComponent("namer-pictures")
+            try? FileManager.default.createDirectory(at: frames, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: frames) }
+            let byPath = Dictionary(members.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+            // What the model looks at: a JPEG of each picture (HEIC too), a frame from the middle of each video.
+            func pictures(_ paths: [String]) -> [String] {
+                paths.compactMap { path in
+                    guard let member = byPath[path] else { return nil }
+                    if member.kind == "video" {
+                        return try? PreviewImages.make(.video, of: path, at: max(0.5, (member.duration ?? 2) / 2),
+                                                       pixels: 768, in: frames)
+                    }
+                    return try? PreviewImages.make(.image, of: path, at: nil, pixels: 768, in: frames)
+                }
+            }
             emit(["event": "stage", "stage": "naming"])
+            let total = unnamed.count + unnamedSections.count
             for (done, index) in unnamed.enumerated() {
-                let pictures = (result[index]["namerSamples"] as? [String]) ?? []
-                var name = "Видео"
-                if !pictures.isEmpty, let answer = try? namer.answer(pictures: pictures, question: question) {
+                let shown = pictures((result[index]["namerSamples"] as? [String]) ?? [])
+                var name = "Без названия"
+                if !shown.isEmpty, let answer = try? namer.answer(pictures: shown, question: question) {
                     name = cleaned(answer)
                 }
                 result[index]["name"] = name
-                emit(["event": "named", "group": index, "name": name, "done": done + 1, "total": unnamed.count])
-                if (done + 1) % 5 == 0 { try write(result, members: members, folders: folders, junk: junk, to: out) }
+                emit(["event": "named", "group": index, "name": name, "done": done + 1, "total": total])
+                if (done + 1) % 5 == 0 { try write(result, members: members, folders: folders, extras: extras, to: out) }
+            }
+            for (done, index) in unnamedSections.enumerated() {
+                // The biggest groups of the section: one picture and the name of each.
+                let parts = sections[index].sorted { (result[$0]["count"] as? Int ?? 0) > (result[$1]["count"] as? Int ?? 0) }
+                let names = parts.compactMap { result[$0]["name"] as? String }
+                let shown = pictures(parts.prefix(4).compactMap { ((result[$0]["namerSamples"] as? [String]) ?? []).first })
+                let ask = Self.sectionQuestion(names)
+                var name = names.first ?? "Раздел"
+                if !shown.isEmpty, let answer = try? namer.answer(pictures: shown, question: ask) { name = cleaned(answer) }
+                sectionNames[index] = name
+                emit(["event": "named", "section": index, "name": name, "done": unnamed.count + done + 1, "total": total])
             }
         }
-        try write(result, members: members, folders: folders, junk: junk, to: out)
+        extras["sections"] = sections.indices.map { index -> [String: Any] in
+            let fallback = result[sections[index][0]]["name"] as? String ?? "Раздел"
+            return ["groups": sections[index].sorted(), "name": sectionNames[index] ?? fallback]
+        }
+        try write(result, members: members, folders: folders, extras: extras, to: out)
         return result.count
     }
 
@@ -233,7 +279,7 @@ private enum Analysis {
         var fields: [String: Any] = [
             "id": id, "count": group.count, "bytes": bytes, "kinds": kinds, "years": years,
             "samples": group.prefix(9).map { members[$0].path },
-            "namerSamples": pictures.prefix(4).map { members[$0].path },
+            "namerSamples": (pictures.count >= 3 ? pictures : group).prefix(4).map { members[$0].path },
             "members": group.map { members[$0].path },
         ]
         return fields
@@ -310,7 +356,7 @@ private enum Analysis {
 
     // MARK: Output
 
-    static func write(_ groups: [[String: Any]], members: [Member], folders: [String], junk: [String: Any],
+    static func write(_ groups: [[String: Any]], members: [Member], folders: [String], extras: [String: Any],
                       to file: URL) throws {
         var kinds: [String: Int] = [:], years: [String: Int] = [:], bytes: Int64 = 0
         for member in members {
@@ -320,11 +366,11 @@ private enum Analysis {
         }
         let sizes = Dictionary(members.map { ($0.path, $0.size) }, uniquingKeysWith: { first, _ in first })
         let kindOf = Dictionary(members.map { ($0.path, $0.kind) }, uniquingKeysWith: { first, _ in first })
-        let saved: [String: Any] = [
+        var saved: [String: Any] = [
             "version": 1,
             "created": ISO8601DateFormatter().string(from: Date()),
             "folders": folders,
-            "files": members.count, "bytes": bytes, "kinds": kinds, "years": years, "junk": junk,
+            "files": members.count, "bytes": bytes, "kinds": kinds, "years": years,
             "groups": groups.map { group -> [String: Any] in
                 var group = group
                 group["members"] = (group["members"] as? [String] ?? []).map { path -> [String: Any] in
@@ -333,6 +379,7 @@ private enum Analysis {
                 return group
             },
         ]
+        for (key, value) in extras { saved[key] = value }
         let data = try JSONSerialization.data(withJSONObject: saved, options: [.sortedKeys])
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let partial = file.appendingPathExtension("partial")
@@ -525,6 +572,75 @@ extension Analysis {
                     if done % 50 == 0 || done == total { emit(["event": "measured", "done": done, "total": total]) }
                 }
             }
+        }
+    }
+}
+
+// MARK: Sections
+
+extension Analysis {
+    /// Bigger groups out of the small ones (своя версия): the groups whose files look most alike merge first, then
+    /// the next pair, until one is left. The merges are kept in order, so the window can stop anywhere: more steps
+    /// make bigger groups, fewer keep them fine. "Разное" stays out.
+    enum Sections {
+        struct Merge {
+            let a: Int
+            let b: Int
+            let into: Int
+            let similarity: Float
+        }
+
+        static func merges(_ groups: [[Int]], members: [Member], misc: Bool) -> [Merge] {
+            let count = groups.count - (misc ? 1 : 0)
+            guard count > 1 else { return [] }
+            var sums: [Int: [Float]] = [:]
+            for index in 0..<count {
+                var sum = [Float](repeating: 0, count: 768)
+                for member in groups[index] {
+                    for d in 0..<768 { sum[d] += members[member].vector[d] }
+                }
+                sums[index] = sum
+            }
+            var merges: [Merge] = []
+            var next = count
+            while sums.count > 1 {
+                let ids = sums.keys.sorted()
+                var best: (Int, Int, Float) = (ids[0], ids[1], -2)
+                for (position, a) in ids.enumerated() {
+                    for b in ids[(position + 1)...] {
+                        let similarity = cosine(sums[a]!, sums[b]!)
+                        if similarity > best.2 { best = (a, b, similarity) }
+                    }
+                }
+                var merged = sums[best.0]!
+                let other = sums[best.1]!
+                for d in 0..<768 { merged[d] += other[d] }
+                sums[best.0] = nil
+                sums[best.1] = nil
+                sums[next] = merged
+                merges.append(Merge(a: best.0, b: best.1, into: next, similarity: best.2))
+                next += 1
+            }
+            return merges
+        }
+
+        /// The groups (by index) of each section: a handful, about a quarter as many as the groups, 2 to 12.
+        static func cut(_ merges: [Merge], groups count: Int) -> [[Int]] {
+            guard count > 4 else { return (0..<count).map { [$0] } }
+            let target = max(2, min(12, Int((Double(count) / 4).rounded())))
+            var parts: [Int: [Int]] = Dictionary(uniqueKeysWithValues: (0..<count).map { ($0, [$0]) })
+            for merge in merges.prefix(count - target) {
+                parts[merge.into] = (parts[merge.a] ?? []) + (parts[merge.b] ?? [])
+                parts[merge.a] = nil
+                parts[merge.b] = nil
+            }
+            return parts.values.sorted { $0.count > $1.count }
+        }
+
+        static func cosine(_ a: [Float], _ b: [Float]) -> Float {
+            let ab = Analysis.dot(a, b), aa = Analysis.dot(a, a), bb = Analysis.dot(b, b)
+            guard aa > 0, bb > 0 else { return 0 }
+            return ab / (aa.squareRoot() * bb.squareRoot())
         }
     }
 }

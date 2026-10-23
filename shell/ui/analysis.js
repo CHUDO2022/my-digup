@@ -139,6 +139,7 @@ function viewPaths() {
   const view = state.view;
   if (!view) return [];
   if (view.type === "group") return state.result.groups[view.index].members.map((member) => member.path);
+  if (view.type === "cluster") return view.groups.flatMap((index) => state.result.groups[index].members.map((member) => member.path));
   const list = state.result.junk?.[view.key] || [];
   const junk = JUNK.find((item) => item.key === view.key);
   return junk?.sets ? list.flatMap((set) => [set.keep, ...set.extra]) : list;
@@ -228,11 +229,13 @@ function render() {
   for (const button of $("tabs").querySelectorAll("button")) button.classList.toggle("selected", button.dataset.tab === state.tab);
   $("title").textContent = !view ? "Анализ фото"
     : view.type === "group" ? state.result.groups[view.index].name || "Группа"
+    : view.type === "cluster" ? clusterName(view.groups, view.groups.map((index) => state.result.groups[index]).sort((a, b) => b.count - a.count))
     : JUNK.find((item) => item.key === view.key).title;
   renderActions();
   if (state.tab === "quarantine" && !view) return renderQuarantine(main);
   if (!state.result || !state.result.groups) return renderEmpty(main);
   if (view?.type === "group") return renderGroup(main, state.result.groups[view.index]);
+  if (view?.type === "cluster") return renderCluster(main, view.groups);
   if (view?.type === "junk") return renderJunkList(main, view.key);
   if (state.tab === "junk") return renderJunk(main);
   renderOverview(main);
@@ -258,8 +261,20 @@ function stat(big, small) {
   return node;
 }
 
-function renderOverview(main) {
+function renderOverview(main, keep) {
   const result = state.result;
+  if (keep) {
+    // The slider moved: only the cards change (the slider keeps its focus).
+    const old = main.querySelector(".groups");
+    const label = main.querySelector(".level b");
+    if (old && label) {
+      label.textContent = `${state.level} ${plural(state.level, "группа", "группы", "групп")}`;
+      const fresh = document.createElement("div");
+      renderGroupsInto(fresh);
+      old.replaceWith(fresh.firstChild);
+      return;
+    }
+  }
   const stats = element("div", "stats");
   const kinds = result.kinds || {};
   stats.append(
@@ -286,21 +301,92 @@ function renderOverview(main) {
     }
     main.append(chart);
   }
-  main.append(element("h3", null, "Что на фото и видео"));
+  const heading = element("div", "level");
+  heading.append(element("h3", null, "Что на фото и видео"));
+  const leaves = result.groups.filter((group) => !group.misc && group.members.length).length;
+  if (leaves > 2 && result.merges?.length) {
+    const slider = element("input");
+    slider.type = "range";
+    slider.min = 2;
+    slider.max = leaves;
+    slider.value = state.level = Math.min(Math.max(2, state.level ?? (result.sections?.length || leaves)), leaves);
+    slider.oninput = () => { state.level = Number(slider.value); renderOverview(main, true); };
+    const label = element("label", "slider");
+    label.append(element("span", null, "Крупнее"), slider, element("span", null, "Подробнее"),
+                 element("b", null, `${state.level} ${plural(state.level, "группа", "группы", "групп")}`));
+    heading.append(label);
+  }
+  main.append(heading);
+  renderGroupsInto(main);
+}
+
+/// The cards of the groups (or of merged groups, as the slider has them).
+function renderGroupsInto(main) {
+  const result = state.result;
   const groups = element("section", "groups");
-  result.groups.forEach((group, index) => {
-    if (!group.members.length) return;
+  for (const cluster of clusters()) {
+    const parts = cluster.map((index) => result.groups[index]).filter((group) => group.members.length);
+    if (!parts.length) continue;
+    parts.sort((a, b) => b.count - a.count);
     const card = element("div", "card");
     const thumbs = element("div", "thumbs");
-    for (const path of (group.samples || []).slice(0, 6)) thumbs.append(tile(path));
+    const samples = parts.length === 1 ? (parts[0].samples || []).slice(0, 6)
+      : parts.flatMap((group) => (group.samples || []).slice(0, Math.max(1, Math.ceil(6 / parts.length)))).slice(0, 6);
+    for (const path of samples) thumbs.append(tile(path));
     const about = element("div", "about");
-    about.append(element("div", "name", group.name || "Модель ещё думает…"));
-    about.append(element("div", "meta", `${files(group.count)} · ${size(group.bytes)}`));
+    about.append(element("div", "name", clusterName(cluster, parts)));
+    const count = parts.reduce((sum, group) => sum + group.count, 0);
+    const bytes = parts.reduce((sum, group) => sum + group.bytes, 0);
+    about.append(element("div", "meta", (parts.length > 1 ? `${parts.length} ${plural(parts.length, "группа", "группы", "групп")} · ` : "")
+                                        + `${files(count)} · ${size(bytes)}`));
     card.append(thumbs, about);
-    card.onclick = () => openView({ type: "group", index });
+    card.onclick = () => openView(cluster.length === 1 ? { type: "group", index: cluster[0] } : { type: "cluster", groups: cluster });
     groups.append(card);
-  });
+  }
   main.append(groups);
+}
+
+/// The groups as the slider has them: the first merges applied until `state.level` are left ("Разное" apart, last).
+function clusters() {
+  const result = state.result;
+  const leaves = result.groups.map((group, index) => index).filter((index) => !result.groups[index].misc);
+  const parts = new Map(leaves.map((index) => [index, [index]]));
+  const target = state.level ?? leaves.length;
+  for (const merge of result.merges || []) {
+    if (parts.size <= target) break;
+    if (!parts.has(merge.a) || !parts.has(merge.b)) continue;
+    parts.set(merge.into, [...parts.get(merge.a), ...parts.get(merge.b)]);
+    parts.delete(merge.a);
+    parts.delete(merge.b);
+  }
+  const list = [...parts.values()].sort((a, b) => sizeOfCluster(b) - sizeOfCluster(a));
+  const misc = result.groups.findIndex((group) => group.misc);
+  if (misc >= 0) list.push([misc]);
+  return list;
+}
+
+const sizeOfCluster = (cluster) => cluster.reduce((sum, index) => sum + (state.result.groups[index].count || 0), 0);
+
+/// A section's name when the cluster is one (the model named it); else the biggest group's name and how many more.
+function clusterName(cluster, parts) {
+  if (cluster.length === 1) return parts[0].name || "Модель ещё думает…";
+  const key = [...cluster].sort((a, b) => a - b).join(",");
+  const section = (state.result.sections || []).find((item) => [...item.groups].sort((a, b) => a - b).join(",") === key);
+  if (section?.name) return section.name;
+  return `${parts[0].name || "Группа"} и ещё ${parts.length - 1}`;
+}
+
+function renderCluster(main, cluster) {
+  const parts = cluster.map((index) => [index, state.result.groups[index]]).filter(([, group]) => group.members.length)
+    .sort(([, a], [, b]) => b.count - a.count);
+  const grid = element("section", "grid");
+  for (const [index, group] of parts) {
+    const title = element("div", "set link", `${group.name || "Группа"} · ${files(group.count)} · ${size(group.bytes)} ›`);
+    title.onclick = () => openView({ type: "group", index });
+    grid.append(title);
+    for (const member of group.members) grid.append(tile(member.path, { selectable: true }));
+  }
+  main.append(grid);
 }
 
 function renderGroup(main, group) {
