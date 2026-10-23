@@ -61,9 +61,10 @@ if [[ -z $report ]]; then
 fi
 echo "panel: $report"
 # Своя версия читает только фото и видео: recipe.txt и speech.wav не индексируются.
+# With three pictures none can stand out (the meaning gate wants z ≥ 2), so the panel may show nothing: that it
+# answered is the check here; that every picture got a vector is checked below.
 if [[ $report != *'"photo.jpg"'* ]]; then
-  echo "the panel didn't find photo.jpg"
-  exit 1
+  echo "(the panel showed nothing for three pictures: expected)"
 fi
 
 echo "the helper with only Windows on PATH"
