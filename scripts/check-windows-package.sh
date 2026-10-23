@@ -35,7 +35,7 @@ TEXT
 echo "first launch"
 started=$(date +%s)
 "$installed/DigUp.exe" --index "$(win "$work/index")" --models "$models" --settings "$(win "$work/settings.json")" \
-  --offer "$(win "$work/files")" --hotkey "Ctrl+Alt+Shift+D" --debug-setup --debug-query "photo" \
+  --offer "$(win "$work/files")" --hotkey "Ctrl+Alt+Shift+D" --debug-setup --debug-query "green hills with a tree and the sun" \
   --debug-quit > "$work/out.txt" 2> "$work/err.txt" &
 app=$!
 report=
@@ -72,5 +72,5 @@ PATH="/c/Windows/System32:/c/Windows:/c/Windows/System32/Wbem" "$helper" status 
   | tee "$work/status.txt"
 grep -Eq '^vectors: 3 in 3 segments' "$work/status.txt" || { echo "not every file has a vector"; exit 1; }
 PATH="/c/Windows/System32:/c/Windows:/c/Windows/System32/Wbem" DIGUP_MODELS="$models" \
-  "$helper" search "photo" --index "$(win "$work/index")" -n 3
+  "$helper" search "green hills with a tree and the sun" --index "$(win "$work/index")" -n 3
 echo "ok"
